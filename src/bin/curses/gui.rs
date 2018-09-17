@@ -149,6 +149,20 @@ impl Gui {
                     self.state.activate_buffer(buf);
                 }
 
+                Request::NextBuffer => {
+                    let len = self.state.buffers_len();
+                    let (index, _) = self.state.current_buffer();
+                    let pos = if index == len - 1 { 0 } else { index + 1 };
+                    self.state.activate_buffer(pos);
+                }
+
+                Request::PrevBuffer => {
+                    let len = self.state.buffers_len();
+                    let (index, _) = self.state.current_buffer();
+                    let pos = if index == 0 { len - 1 } else { index - 1 };
+                    self.state.activate_buffer(pos);
+                }
+
                 Request::Join(chan) => {
                     let client = self.state.client().unwrap();
                     if !client.join_channel(&chan) {

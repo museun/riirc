@@ -61,24 +61,25 @@ impl InputWindow {
             // backspace
             0x08 => self.handle_delete_key(true),
 
+            // C-l
+            0x0C => self.queue.push(Request::Clear(true)),
+
             // C-0 to C-9
-            0x37...0x40 => self.switch_buffer(((ch as u8) - 0x37) as usize),
+            0x37...0x40 => self
+                .queue
+                .push(Request::SwitchBuffer((ch as u8 - 0x37) as usize)),
 
-            // C-N
-            0x0E => {}
+            // C-n
+            0x0E => self.queue.push(Request::NextBuffer),
 
-            // C-P
-            0x10 => {}
+            // C-p
+            0x10 => self.queue.push(Request::PrevBuffer),
 
-            // C-W
+            // C-w
             0x17 => {}
 
             _ => {}
         };
-    }
-
-    fn switch_buffer(&mut self, buf: usize) {
-        self.queue.push(Request::SwitchBuffer(buf))
     }
 
     // TODO probably check to see if this is in a printable range

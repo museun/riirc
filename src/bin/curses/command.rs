@@ -147,8 +147,16 @@ fn buffer_command(state: &Arc<State>, queue: &Arc<MessageQueue>, parts: &[&str])
 
 fn list_buffer_command(state: &Arc<State>, queue: &Arc<MessageQueue>, parts: &[&str]) {
     let buffers = state.buffers();
+    let len = state.buffers_len() - 1;
 
+    let mut output = String::from("buffers: ");
     for (n, buffer) in buffers.iter().enumerate() {
-        queue.status(format!("buffer #{}: {}", n, buffer.name()))
+        if n < len {
+            output.push_str(&format!("{}:{}, ", n, buffer.name()))
+        } else {
+            output.push_str(&format!("{}:{}", n, buffer.name()))
+        }
     }
+
+    queue.status(output)
 }

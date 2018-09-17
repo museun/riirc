@@ -7,7 +7,10 @@ pub enum Request {
     Join(String),
     Part(String),
     Quit(Option<String>),
+
     SwitchBuffer(usize),
+    NextBuffer,
+    PrevBuffer,
 
     Queue(usize, String),  // buffer index
     Target(usize, String), // buffer index

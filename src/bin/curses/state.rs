@@ -162,6 +162,11 @@ impl State {
         buffers.iter().map(Arc::clone).collect()
     }
 
+    pub fn buffers_len(&self) -> usize {
+        let buffers = &self.inner.read().unwrap().buffers;
+        buffers.len()
+    }
+
     pub fn send_message(&self, data: impl AsRef<str>) {
         if self.inner.read().unwrap().client.is_none() {
             self.queue.status("not connected to a server");
