@@ -10,49 +10,49 @@ pub enum Error {
     UnknownCommand,
 }
 
-#[derive(Debug, PartialEq)]
-pub enum Command<'a> {
+#[derive(Debug, PartialEq, Clone)]
+pub enum Command {
     Privmsg {
-        target: &'a str,
-        data: &'a str,
+        target: String,
+        data: String,
         is_notice: bool,
     },
     Join {
-        target: Vec<&'a str>,
-        key: Vec<&'a str>,
+        target: Vec<String>,
+        key: Vec<String>,
     },
     Part {
-        target: Vec<&'a str>,
-        reason: Option<&'a str>,
+        target: Vec<String>,
+        reason: Option<String>,
     },
     Quit {
-        reason: &'a str,
+        reason: String,
     },
     Nick {
-        nickname: &'a str,
+        nickname: String,
     },
     Ping {
-        token: &'a str,
+        token: String,
     },
     Pong {
-        target: &'a str,
+        target: String,
     },
     Error {
-        message: &'a str,
+        message: String,
     },
     // TODO CAP and TAG
     Other {
-        command: &'a str,
-        params: Vec<&'a str>,
+        command: String,
+        params: Vec<String>,
     },
     Reply {
         numeric: u16,
-        params: Vec<&'a str>,
+        params: Vec<String>,
     },
 }
 
-impl<'a> Command<'a> {
-    pub fn parse(input: &'a str) -> Result<Self, Error> {
+impl Command {
+    pub fn parse(input: &str) -> Result<Self, Error> {
         let pos = input.find(' ').ok_or_else(|| Error::MissingCommand)?;
 
         fn get_data(s: &str) -> Result<(&str, &str), Error> {
@@ -75,8 +75,8 @@ impl<'a> Command<'a> {
             "PRIVMSG" | "NOTICE" => {
                 let (target, data) = get_data(rest)?;
                 Ok(Command::Privmsg {
-                    target,
-                    data,
+                    target: target.into(),
+                    data: data.into(),
                     is_notice: command == "NOTICE",
                 })
             }
@@ -87,11 +87,14 @@ impl<'a> Command<'a> {
 
                 let mut parts = rest.split(' ');
                 let target = match parts.next() {
-                    Some(target) => target.split(',').collect::<Vec<_>>(),
+                    Some(target) => target[1..]
+                        .split(',')
+                        .map(|s| s.to_owned())
+                        .collect::<Vec<_>>(),
                     None => return Err(Error::MissingTarget),
                 };
                 let key = match parts.next() {
-                    Some(key) => key.split(',').collect::<Vec<_>>(),
+                    Some(key) => key.split(',').map(|s| s.to_owned()).collect::<Vec<_>>(),
                     None => vec![],
                 };
 
@@ -104,11 +107,11 @@ impl<'a> Command<'a> {
 
                 let mut parts = rest.split(' ');
                 let target = match parts.next() {
-                    Some(target) => target.split(',').collect::<Vec<_>>(),
+                    Some(target) => target.split(',').map(|s| s.to_owned()).collect::<Vec<_>>(),
                     None => return Err(Error::MissingTarget),
                 };
 
-                let reason = parts.next();
+                let reason = parts.next().map(|s| s.to_owned());
                 Ok(Command::Part { target, reason })
             }
             "QUIT" => {
@@ -116,23 +119,31 @@ impl<'a> Command<'a> {
                     return Err(Error::MissingData);
                 }
 
-                Ok(Command::Quit { reason: &rest[1..] })
+                Ok(Command::Quit {
+                    reason: rest[1..].to_owned(),
+                })
             }
             "NICK" => {
                 if !is_valid_nick(rest) || rest.is_empty() {
                     return Err(Error::InvalidNickname);
                 }
 
-                Ok(Command::Nick { nickname: rest })
+                Ok(Command::Nick {
+                    nickname: rest.to_owned(),
+                })
             }
-            "PING" => Ok(Command::Ping { token: rest }),
-            "PONG" => Ok(Command::Pong { target: rest }),
+            "PING" => Ok(Command::Ping {
+                token: rest.to_owned(),
+            }),
+            "PONG" => Ok(Command::Pong {
+                target: rest.to_owned(),
+            }),
             "ERROR" => {
                 if rest.get(0..1) != Some(":") {
                     return Err(Error::MissingData);
                 }
                 Ok(Command::Error {
-                    message: &rest[1..],
+                    message: rest[1..].to_owned(),
                 })
             }
 
@@ -140,23 +151,26 @@ impl<'a> Command<'a> {
                 let params = if let Some(pos) = rest.find(':') {
                     let (l, r) = rest.split_at(pos);
                     let (l, r) = (l.trim(), r.trim());
-                    let r = if r.get(0..1) == Some(":") { &r[1..] } else { r };
+                    let r = if r.get(0..1) == Some(":") { &r[1..] } else { r }.to_owned();
 
                     if l.is_empty() {
                         vec![r]
                     } else {
-                        let mut v = l.split(' ').collect::<Vec<_>>();
+                        let mut v = l.split(' ').map(|s| s.to_owned()).collect::<Vec<_>>();
                         v.push(r);
                         v
                     }
                 } else {
-                    rest.split(' ').collect::<Vec<_>>()
+                    rest.split(' ').map(|s| s.to_owned()).collect::<Vec<_>>()
                 };
 
                 if let Ok(n) = command.parse::<u16>() {
                     Ok(Command::Reply { numeric: n, params })
                 } else {
-                    Ok(Command::Other { command, params })
+                    Ok(Command::Other {
+                        command: command.to_owned(),
+                        params,
+                    })
                 }
             }
         }

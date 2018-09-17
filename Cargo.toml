@@ -5,6 +5,8 @@ authors = ["museun <museun@outlook.com>"]
 edition = "2018"
 
 [dependencies]
-pancurses = {version = "0.16.0", default-features = false, features = ["win32"]}
+#pancurses = {version = "0.16.0", default-features = false, features = ["win32"]}
+pancurses = { path = "c:/dev/tmp/pancurses" }
+
 log = "0.4.5"
 env_logger = "0.5.13"

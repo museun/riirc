@@ -18,19 +18,19 @@ impl fmt::Display for Error {
 }
 
 #[derive(PartialEq, Clone)]
-pub enum Prefix<'a> {
+pub enum Prefix {
     User {
-        nick: &'a str,
-        user: &'a str,
-        host: &'a str,
+        nick: String,
+        user: String,
+        host: String,
     },
     Server {
-        host: &'a str,
+        host: String,
     },
 }
 
-impl<'a> Prefix<'a> {
-    pub fn parse(input: &'a str) -> Result<(Self, usize), Error> {
+impl Prefix {
+    pub fn parse(input: &str) -> Result<(Self, usize), Error> {
         if !input.starts_with(':') {
             return Err(Error::MissingLead);
         }
@@ -43,14 +43,21 @@ impl<'a> Prefix<'a> {
                 let at = s.find('@').ok_or_else(|| Error::MissingHost)?;
                 let user = &s[pos + 1..at];
                 let host = &s[at + 1..];
-                Ok((Prefix::User { nick, user, host }, end))
+                Ok((
+                    Prefix::User {
+                        nick: nick.into(),
+                        user: user.into(),
+                        host: host.into(),
+                    },
+                    end,
+                ))
             }
-            None => Ok((Prefix::Server { host: s }, end)),
+            None => Ok((Prefix::Server { host: s.into() }, end)),
         }
     }
 }
 
-impl<'a> fmt::Debug for Prefix<'a> {
+impl fmt::Debug for Prefix {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             Prefix::User {
