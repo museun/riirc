@@ -167,13 +167,13 @@ impl State {
         buffers.len()
     }
 
-    pub fn send_message(&self, data: impl AsRef<str>) {
+    pub fn send_line(&self, data: impl AsRef<str>) {
         if self.inner.read().unwrap().client.is_none() {
             self.queue.status("not connected to a server");
             return;
         }
 
-        let (index, buffer) = { self.current_buffer() };
+        let (index, buffer) = self.current_buffer();
         if buffer.name().starts_with('*') {
             self.queue
                 .status(format!("cannot send to {}", buffer.name()));
@@ -189,17 +189,9 @@ impl State {
                 .expect("client should have a valid nickname")
         };
 
+        // TODO this should use a Message Formatter trait
         let msg = format!("{}: {}", nickname, data);
         self.queue.push(Request::Queue(index, msg));
-    }
-
-    pub fn assume_connected(&self) -> bool {
-        let inner = &self.inner.read().unwrap();
-        if inner.client.is_none() {
-            self.queue.status("not connected");
-            return false;
-        }
-        true
     }
 
     pub fn set_client(&self, client: riirc::Client, errors: Receiver<riirc::Error>) {

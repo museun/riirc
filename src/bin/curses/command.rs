@@ -4,7 +4,39 @@ use std::sync::Arc;
 use super::*;
 use riirc::IrcClient;
 
-type Command = fn(&Arc<State>, &Arc<MessageQueue>, &[&str]);
+#[derive(Debug, PartialEq)]
+pub enum Error {
+    InvalidArgument(&'static str),
+    InvalidBuffer(&'static str),
+    AlreadyConnected,
+    NotConnected,
+    ForceExit,
+}
+
+impl Error {
+    fn report_error(&self, ctx: &Context) {
+        use self::Error::*;
+
+        match &self {
+            InvalidArgument(s) | InvalidBuffer(s) => ctx.queue.status(s),
+            AlreadyConnected => ctx.queue.status("already connected"),
+            NotConnected => ctx.queue.status("not connected"),
+            _ => {}
+        }
+    }
+}
+
+// TODO make a help system
+// TODO TODO deserialize it from a file
+
+type CommandResult = Result<(), Error>;
+type Command = fn(&Context) -> CommandResult;
+
+struct Context<'a> {
+    state: Arc<State>,
+    queue: Arc<MessageQueue>,
+    parts: &'a [&'a str],
+}
 
 pub struct Processor {
     map: HashMap<&'static str, Command>,
@@ -26,128 +58,153 @@ impl Processor {
 
     fn initialize(&mut self) {
         self.map.insert("/echo", echo_command);
+        self.map.insert("/exit", |ctx| {
+            if let Some(client) = ctx.state.client() {
+                client.quit(Some("leaving".into()));
+            }
+            Err(Error::ForceExit)
+        });
         self.map.insert("/connect", connect_command);
         self.map.insert("/quit", quit_command);
         self.map.insert("/clear", clear_command);
         self.map.insert("/join", join_command);
         self.map.insert("/part", part_command);
         self.map.insert("/buffer", buffer_command);
-        self.map.insert("/buffers", list_buffer_command);
+        self.map.insert("/buffers", list_buffers_command);
     }
 
-    pub fn handle(&mut self, input: &str) {
+    pub fn handle(&mut self, input: &str) -> CommandResult {
+        if input.is_empty() {
+            Ok(())?;
+        }
+
+        if !input.starts_with('/') {
+            self.state.send_line(input);
+            Ok(())?;
+        }
+
         let input = input.to_string();
         let mut input = input.split(' ');
         let query = input.next().unwrap();
         if !self.map.contains_key(query) {
             self.queue.status(format!("unknown command: {}", query));
-            return;
+            Ok(())?;
         }
 
         let parts = input.collect::<Vec<_>>();
         let func = self.map[&query];
-        func(&Arc::clone(&self.state), &Arc::clone(&self.queue), &parts)
+        let ctx = Context {
+            state: Arc::clone(&self.state),
+            queue: Arc::clone(&self.queue),
+            parts: &parts,
+        };
+        match func(&ctx) {
+            Err(ref err) if *err != Error::ForceExit => err.report_error(&ctx),
+            Err(err) => Err(err)?,
+            _ => {}
+        };
+
+        Ok(())
     }
 }
 
-fn echo_command(state: &Arc<State>, queue: &Arc<MessageQueue>, parts: &[&str]) {
-    for part in parts {
-        queue.status(part.to_string());
+// this isn't a command
+fn assume_connected(ctx: &Context) -> CommandResult {
+    if ctx.state.client().is_none() {
+        Err(Error::NotConnected)?;
     }
+    Ok(())
 }
 
-fn connect_command(state: &Arc<State>, queue: &Arc<MessageQueue>, parts: &[&str]) {
-    {
-        if state.client().is_some() {
-            queue.status("already connected");
-            return;
-        }
+fn assume_args(ctx: &Context, msg: &'static str) -> CommandResult {
+    if ctx.parts.is_empty() {
+        Err(Error::InvalidArgument(msg))?;
     }
+    Ok(())
+}
 
+fn echo_command(ctx: &Context) -> CommandResult {
+    for part in ctx.parts {
+        ctx.queue.status(part.to_string());
+    }
+    Ok(())
+}
+
+fn connect_command(ctx: &Context) -> CommandResult {
+    if ctx.state.client().is_some() {
+        Err(Error::AlreadyConnected)?;
+    };
+
+    // TODO get this from a config file
     let client = riirc::Client::new("localhost:6667").expect("connect to localhost");
-    let errors = client.run();
-    // do something with the errors
-
     client.nick("test");
     client.user("test", "test name");
 
-    {
-        state.set_client(client, errors);
-    }
+    let errors = client.run();
+    ctx.state.set_client(client, errors);
+
+    Ok(())
 }
 
-fn quit_command(state: &Arc<State>, queue: &Arc<MessageQueue>, parts: &[&str]) {
-    if !state.assume_connected() {
-        return;
-    }
+fn quit_command(ctx: &Context) -> CommandResult {
+    assume_connected(&ctx)?;
 
-    let msg = if parts.is_empty() {
+    let msg = if ctx.parts.is_empty() {
         None
     } else {
-        Some(parts.join(" "))
+        Some(ctx.parts.join(" "))
     };
 
-    queue.push(Request::Quit(msg));
+    ctx.queue.push(Request::Quit(msg));
+    Ok(())
 }
 
-fn join_command(state: &Arc<State>, queue: &Arc<MessageQueue>, parts: &[&str]) {
-    if !state.assume_connected() {
-        return;
-    }
-
-    if parts.is_empty() {
-        queue.status("try: /join <chan>");
-        return;
-    }
+fn join_command(ctx: &Context) -> CommandResult {
+    assume_connected(&ctx)?;
+    assume_args(&ctx, "try: /join <chan>")?;
 
     // TODO make this actually work on multiple channerls + keys
-    queue.push(Request::Join(parts[0].to_owned()));
+    ctx.queue.push(Request::Join(ctx.parts[0].to_owned()));
+    Ok(())
 }
 
-fn part_command(state: &Arc<State>, queue: &Arc<MessageQueue>, parts: &[&str]) {
-    if !state.assume_connected() {
-        return;
-    }
+fn part_command(ctx: &Context) -> CommandResult {
+    assume_connected(&ctx)?;
 
-    let (status, buf) = state.at_status_buffer();
+    let (status, buf) = ctx.state.at_status_buffer();
     if status {
-        queue.status("cannot /part in a *window");
-        return;
-    }
+        Err(Error::InvalidBuffer("cannot /part in a *window"))?;
+    };
 
-    let ch = if parts.is_empty() {
+    let ch = if ctx.parts.is_empty() {
         buf.name().to_string()
     } else {
-        parts[0].to_string()
+        ctx.parts[0].to_string()
     };
 
-    queue.push(Request::Part(ch));
+    ctx.queue.push(Request::Part(ch));
+    Ok(())
 }
 
-fn clear_command(state: &Arc<State>, queue: &Arc<MessageQueue>, parts: &[&str]) {
-    queue.push(Request::Clear(true));
+fn clear_command(ctx: &Context) -> CommandResult {
+    ctx.queue.push(Request::Clear(true));
+    Ok(())
 }
 
-fn buffer_command(state: &Arc<State>, queue: &Arc<MessageQueue>, parts: &[&str]) {
-    if parts.is_empty() {
-        queue.status("try /buffer N");
-        return;
-    }
+fn buffer_command(ctx: &Context) -> CommandResult {
+    assume_args(&ctx, "try: /buffer N")?;
 
-    let buf = match parts[0].parse::<usize>() {
-        Ok(n) => n,
-        Err(_err) => {
-            queue.status("try /buffer N (a number this time)");
-            return;
-        }
-    };
+    let buf = ctx.parts[0]
+        .parse::<usize>()
+        .map_err(|_e| Error::InvalidArgument("try: /buffer N (a number this time)"))?;
 
-    queue.push(Request::SwitchBuffer(buf))
+    ctx.queue.push(Request::SwitchBuffer(buf));
+    Ok(())
 }
 
-fn list_buffer_command(state: &Arc<State>, queue: &Arc<MessageQueue>, parts: &[&str]) {
-    let buffers = state.buffers();
-    let len = state.buffers_len() - 1;
+fn list_buffers_command(ctx: &Context) -> CommandResult {
+    let buffers = ctx.state.buffers();
+    let len = ctx.state.buffers_len() - 1;
 
     let mut output = String::from("buffers: ");
     for (n, buffer) in buffers.iter().enumerate() {
@@ -158,5 +215,6 @@ fn list_buffer_command(state: &Arc<State>, queue: &Arc<MessageQueue>, parts: &[&
         }
     }
 
-    queue.status(output)
+    ctx.queue.status(output);
+    Ok(())
 }

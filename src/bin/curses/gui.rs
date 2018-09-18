@@ -55,20 +55,18 @@ impl Gui {
     }
 
     pub fn run(&mut self) -> RunState {
+        use pancurses::Input::*;
+
         match self.input.read_input() {
             Ok(rt) => match rt {
                 ReadType::Line(line) => {
-                    trace!("read_input: {:?}", line);
-                    if !line.is_empty() {
-                        if line.starts_with('/') {
-                            self.commands.handle(&line);
-                        } else {
-                            self.state.send_message(line);
-                        }
+                    if let Err(err) = self.commands.handle(&line) {
+                        debug!("command error: {:?}", err);
+                        return RunState::Exit;
                     }
-                    self.input.clear_input()
+                    self.input.clear_input();
                 }
-                ReadType::FKey(key) if key == FKey::F10 => return RunState::Exit,
+                ReadType::FKey(key) if key == KeyF10 => return RunState::Exit,
                 ReadType::FKey(key) => trace!("fkey: {:?}", key),
                 ReadType::None => if !self.read_buffers() {
                     // wipe out the state

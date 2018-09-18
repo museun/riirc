@@ -5,7 +5,7 @@ mod inputbuffer;
 use self::inputbuffer::InputBuffer;
 
 mod inputwindow;
-use self::inputwindow::{FKey, InputWindow, ReadType};
+use self::inputwindow::{InputWindow, ReadType};
 
 mod outputwindow;
 use self::outputwindow::OutputWindow;
