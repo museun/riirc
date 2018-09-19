@@ -21,3 +21,9 @@ use self::messagequeue::*;
 
 pub mod gui;
 pub use self::gui::{Gui, RunState};
+
+mod keybinds;
+pub use self::keybinds::*;
+
+mod config;
+pub use self::config::*;

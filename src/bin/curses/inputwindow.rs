@@ -1,125 +1,139 @@
 use pancurses;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
+use super::inputbuffer::{Command, Move, MoveableCursor};
 use super::*;
 
 pub struct InputWindow {
-    window: pancurses::Window,
-    buffer: InputBuffer,
+    window: Arc<WindowWrapper>,
+    buffer: InputBuffer<WindowWrapper>,
     queue: Arc<MessageQueue>,
+    config: Arc<RwLock<Config>>,
+}
+
+struct WindowWrapper(pancurses::Window);
+
+impl ::std::ops::Deref for WindowWrapper {
+    type Target = pancurses::Window;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl MoveableCursor for WindowWrapper {
+    fn move_cursor(&self, pos: usize) {
+        self.mv(self.get_cur_y(), pos as i32);
+    }
+
+    fn delete_at(&self, pos: usize) {
+        self.mv(self.get_cur_y(), pos as i32);
+        self.delch();
+    }
+
+    fn insert_at(&self, pos: usize, ch: char) {
+        self.mv(self.get_cur_y(), pos as i32);
+        self.insch(ch);
+        self.mv(self.get_cur_y(), pos as i32 + 1);
+    }
 }
 
 impl InputWindow {
-    pub fn new(window: pancurses::Window, queue: Arc<MessageQueue>) -> Self {
-        let max = window.get_max_x() as usize;
+    pub fn new(
+        window: pancurses::Window,
+        queue: Arc<MessageQueue>,
+        config: Arc<RwLock<Config>>,
+    ) -> Self {
+        let window = Arc::new(WindowWrapper(window));
         window.nodelay(true);
         window.keypad(true);
+        pancurses::noecho();
+
+        let max = window.get_max_x() as usize;
+        let buffer = InputBuffer::new(max, Arc::clone(&window));
 
         Self {
             window,
-            buffer: InputBuffer::new(max),
+            buffer,
             queue,
+            config,
         }
     }
 
     pub fn read_input(&mut self) -> Result<ReadType, Error> {
         use pancurses::Input::*;
-
-        while let Some(ch) = self.window.getch() {
-            match ch {
-                Character(ch) if ch.is_control() => {
-                    if ch as u8 == 0x0A {
-                        let buf = self.buffer.get_line().into_iter().collect();
-                        return Ok(ReadType::Line(buf));
-                    } else {
-                        self.handle_control_key(ch)
-                    }
-                }
-                Character(ch) => self.handle_input_key(ch),
-
-                KeyLeft => self.handle_key_left(false),
-                KeySLeft => self.handle_key_left(true),
-
-                KeyRight => self.handle_key_right(false),
-                KeySRight => self.handle_key_right(true),
-
-                KeyDC => self.handle_delete_key(false),
-
-                KeyF1 | KeyF2 | KeyF3 | KeyF4 | KeyF5 | KeyF6 | KeyF7 | KeyF8 | KeyF9 | KeyF10
-                | KeyF11 | KeyF12 => return Ok(ReadType::FKey(ch.into())),
-
-                _ => return Err(Error::UnknownInput(ch)),
-            };
+        match self.window.getch() {
+            Some(Character(ch)) => self.handle_input_key(ch),
+            Some(ch) => self.handle_other_key(ch),
+            _ => Ok(ReadType::None),
         }
+    }
 
+    fn handle_other_key(&mut self, input: pancurses::Input) -> Result<ReadType, Error> {
+        use pancurses::Input::*;
+
+        let cmd = match input {
+            KeyHome => &Command::Move(Move::StartOfLine),
+            KeyEnd => &Command::Move(Move::EndOfLine),
+            KeyLeft => &Command::Move(Move::Backward),
+            KeySMessage => &Command::Move(Move::BackwardWord),
+            KeyRight => &Command::Move(Move::Forward),
+            KeySResume => &Command::Move(Move::ForwardWord),
+            KeyDC => &Command::Delete(Move::Forward),
+            KeyF1 | KeyF2 | KeyF3 | KeyF4 | KeyF5 | KeyF6 | KeyF7 | KeyF8 | KeyF9 | KeyF10
+            | KeyF11 | KeyF12 => return Ok(ReadType::FKey(input)),
+            _ => return Err(Error::UnknownInput(input)),
+        };
+
+        self.buffer.handle_command(cmd);
         Ok(ReadType::None)
     }
 
-    fn handle_control_key(&mut self, ch: char) {
-        trace!("got control: 0x{:02X}", ch as u8);
-        match ch as u8 {
-            // backspace
-            0x08 => self.handle_delete_key(true),
+    fn handle_modified_key(&mut self, key: &Key) -> Result<ReadType, Error> {
+        use self::{KeyKind::*, Mod::*};
+        use std::convert::TryFrom;
 
-            // C-l
-            0x0C => self.queue.push(Request::Clear(true)),
-
-            // C-0 to C-9
-            0x37...0x40 => self
-                .queue
-                .push(Request::SwitchBuffer((ch as u8 - 0x37) as usize)),
-
-            // C-n
-            0x0E => self.queue.push(Request::NextBuffer),
-
-            // C-p
-            0x10 => self.queue.push(Request::PrevBuffer),
-
-            // C-w
-            0x17 => {}
-
-            _ => {}
-        };
-    }
-
-    // TODO probably check to see if this is in a printable range
-    fn handle_input_key(&mut self, ch: char) {
-        if let 0x37...0x40 = ch as u8 {
-            self.handle_control_key(ch);
-            return;
+        let keybind = KeyType::from(*key);
+        if let Some(req) = { self.config.read().unwrap().keybinds.get(&keybind) } {
+            if let Ok(cmd) = messagequeue::Request::try_from(*req) {
+                self.queue.push(cmd)
+            }
+            if let Ok(cmd) = inputbuffer::Command::try_from(*req) {
+                self.buffer.handle_command(&cmd);
+            }
         }
 
+        match (&key.modifier, &key.kind) {
+            (None, Backspace) => self.buffer.handle_command(&Command::Delete(Move::Backward)),
+            (None, Enter) => {
+                let buf = self.buffer.line().into_iter().collect();
+                return Ok(ReadType::Line(buf));
+            }
+            _ => trace!("got unknown key: {:?}", key),
+        }
+
+        self.window.refresh();
+        Ok(ReadType::None)
+    }
+
+    fn handle_input_key(&mut self, ch: char) -> Result<ReadType, Error> {
+        if let Some(key) = Key::parse(ch as u16) {
+            match (&key.modifier, &key.kind) {
+                (Mod::None, KeyKind::Other(_))
+                | (Mod::None, KeyKind::Char(_))
+                | (Mod::Shift, KeyKind::Char(_)) => {}
+                _ => return self.handle_modified_key(&key),
+            };
+        }
+
+        // TODO don't do this here
+        // why not?
         let window = self.buffer.display();
         for (i, ch) in window.iter().enumerate() {
             self.window.mvaddch(0, i as i32, *ch);
         }
 
-        self.window.addch(ch);
-        self.buffer.push(ch);
-    }
-
-    fn handle_delete_key(&mut self, backspace: bool) {
-        let pos = self.window.get_cur_x();
-        let pos = if backspace {
-            self.window.mv(self.window.get_cur_y(), pos - 1);
-            pos - 1
-        } else {
-            pos
-        };
-        self.buffer.delete(pos as usize, false);
-        self.window.delch();
-    }
-
-    fn handle_key_left(&mut self, _shift: bool) {
-        let pos = self.window.get_cur_x();
-        self.window.mv(0, pos - 1);
-    }
-
-    fn handle_key_right(&mut self, _shift: bool) {
-        let pos = self.window.get_cur_x();
-        if (pos as usize) < self.buffer.len() {
-            self.window.mv(0, pos + 1);
-        }
+        self.buffer.handle_command(&Command::Append(ch));
+        Ok(ReadType::None)
     }
 
     pub fn clear_input(&mut self) {
@@ -136,45 +150,6 @@ pub enum Error {
 #[derive(Debug, PartialEq)]
 pub enum ReadType {
     Line(String),
-    FKey(FKey),
+    FKey(pancurses::Input),
     None,
-}
-
-impl From<pancurses::Input> for FKey {
-    fn from(input: pancurses::Input) -> FKey {
-        use self::FKey::*;
-        use pancurses::Input::*;
-
-        match input {
-            KeyF1 => F1,
-            KeyF2 => F2,
-            KeyF3 => F3,
-            KeyF4 => F4,
-            KeyF5 => F5,
-            KeyF6 => F6,
-            KeyF7 => F7,
-            KeyF8 => F8,
-            KeyF9 => F9,
-            KeyF10 => F10,
-            KeyF11 => F11,
-            KeyF12 => F12,
-            _ => panic!("not an function key"),
-        }
-    }
-}
-
-#[derive(Debug, PartialEq, Clone, Copy)]
-pub enum FKey {
-    F1,
-    F2,
-    F3,
-    F4,
-    F5,
-    F6,
-    F7,
-    F8,
-    F9,
-    F10,
-    F11,
-    F12,
 }

@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use super::*;
 use riirc::IrcClient;
@@ -35,6 +35,7 @@ type Command = fn(&Context) -> CommandResult;
 struct Context<'a> {
     state: Arc<State>,
     queue: Arc<MessageQueue>,
+    config: Arc<RwLock<Config>>,
     parts: &'a [&'a str],
 }
 
@@ -75,12 +76,12 @@ impl Processor {
 
     pub fn handle(&mut self, input: &str) -> CommandResult {
         if input.is_empty() {
-            Ok(())?;
+            return Ok(());
         }
 
         if !input.starts_with('/') {
             self.state.send_line(input);
-            Ok(())?;
+            return Ok(());
         }
 
         let input = input.to_string();
@@ -88,14 +89,17 @@ impl Processor {
         let query = input.next().unwrap();
         if !self.map.contains_key(query) {
             self.queue.status(format!("unknown command: {}", query));
-            Ok(())?;
+            return Ok(());
         }
+
+        trace!("query: {}", query);
 
         let parts = input.collect::<Vec<_>>();
         let func = self.map[&query];
         let ctx = Context {
             state: Arc::clone(&self.state),
             queue: Arc::clone(&self.queue),
+            config: Arc::clone(&self.state.get_config()),
             parts: &parts,
         };
         match func(&ctx) {
@@ -135,10 +139,19 @@ fn connect_command(ctx: &Context) -> CommandResult {
         Err(Error::AlreadyConnected)?;
     };
 
-    // TODO get this from a config file
-    let client = riirc::Client::new("localhost:6667").expect("connect to localhost");
-    client.nick("test");
-    client.user("test", "test name");
+    let (addr, nick, user, real) = {
+        let config = ctx.config.read().unwrap();
+        (
+            config.server.to_string(),
+            config.nick.to_string(),
+            config.user.to_string(),
+            config.real.to_string(),
+        )
+    };
+
+    let client = riirc::Client::new(&addr).expect("connect to localhost");
+    client.nick(&nick);
+    client.user(&user, &real);
 
     let errors = client.run();
     ctx.state.set_client(client, errors);

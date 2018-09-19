@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use super::*;
 use riirc::IrcClient;
@@ -8,18 +8,21 @@ pub enum RunState {
     Exit,
 }
 
+// it supports utf-8 but it doesn't change the codepage in windows
+// so we should probably do that before we init the library
 pub struct Gui {
     container: pancurses::Window,
     output: OutputWindow,
     input: InputWindow,
 
+    config: Arc<RwLock<Config>>,
     state: Arc<State>,
     queue: Arc<MessageQueue>,
     commands: Processor,
 }
 
 impl Gui {
-    pub fn new() -> Self {
+    pub fn new(config: Config) -> Self {
         let container = pancurses::initscr();
         pancurses::start_color();
         pancurses::use_default_colors();
@@ -27,8 +30,10 @@ impl Gui {
         let bounds = container.get_max_yx();
         trace!("bounds: {:?}", bounds);
 
+        let config = Arc::new(RwLock::new(config));
+
         let queue = Arc::new(MessageQueue::new());
-        let state = Arc::new(State::new(Arc::clone(&queue)));
+        let state = Arc::new(State::new(Arc::clone(&queue), Arc::clone(&config)));
 
         let output = container
             .subwin(bounds.0, bounds.1, 0, 0)
@@ -47,8 +52,10 @@ impl Gui {
         Self {
             container,
             output: OutputWindow::new(output),
-            input: InputWindow::new(input, Arc::clone(&queue)),
+            input: InputWindow::new(input, Arc::clone(&queue), Arc::clone(&config)),
             commands: Processor::new(Arc::clone(&state), Arc::clone(&queue)),
+
+            config: Arc::clone(&config),
             state: Arc::clone(&state),
             queue,
         }

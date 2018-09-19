@@ -15,10 +15,12 @@ struct Inner {
     errors: Option<Arc<Receiver<riirc::Error>>>,
     buffers: VecDeque<Arc<Buffer>>,
     active_buffer: usize,
+
+    config: Arc<RwLock<Config>>,
 }
 
 impl State {
-    pub fn new(queue: Arc<MessageQueue>) -> Self {
+    pub fn new(queue: Arc<MessageQueue>, config: Arc<RwLock<Config>>) -> Self {
         let mut buffers = VecDeque::new();
         buffers.push_back(Arc::new(Buffer::new("*status")));
 
@@ -28,6 +30,8 @@ impl State {
                 errors: None,
                 buffers,
                 active_buffer: 0,
+
+                config,
             }),
             queue: queue,
         }
@@ -203,6 +207,11 @@ impl State {
     pub fn client(&self) -> Option<Arc<riirc::Client>> {
         let inner = self.inner.read().unwrap();
         inner.client.as_ref().map(Arc::clone)
+    }
+
+    pub fn get_config(&self) -> Arc<RwLock<Config>> {
+        let inner = self.inner.read().unwrap();
+        Arc::clone(&inner.config)
     }
 
     pub fn read_errors(&self) -> Option<Arc<Receiver<riirc::Error>>> {
