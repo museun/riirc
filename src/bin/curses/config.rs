@@ -56,8 +56,8 @@ impl Config {
         let mut keybinds = Keybinds::default();
         for child in doc.get_container(1).iter_children() {
             if let ValueRef::String(data) = child.value() {
-                if let Ok(req) = KeyRequest::try_from(data.get().to_string()) {
-                    keybinds.insert(KeyType::from(child.key().get().to_string()), req)
+                if let Ok(req) = KeyRequest::try_from(child.key().get().to_string()) {
+                    keybinds.insert(KeyType::from(data.get().to_string()), req)
                 }
             }
         }

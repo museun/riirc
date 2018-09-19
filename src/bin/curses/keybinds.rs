@@ -1,5 +1,5 @@
 use super::{inputbuffer, messagequeue};
-use std::convert::TryFrom;
+use std::convert::{TryFrom, TryInto};
 use std::fmt;
 
 #[derive(Debug, PartialEq, Clone, Eq, Hash)]
@@ -39,11 +39,17 @@ impl From<String> for KeyType {
     }
 }
 
-impl From<&'static str> for KeyType {
-    fn from(s: &'static str) -> Self {
+impl<'a> From<&'a str> for KeyType {
+    fn from(s: &'a str) -> Self {
         KeyType(s.into())
     }
 }
+
+// impl From<&'static str> for KeyType {
+//     fn from(s: &'static str) -> Self {
+//         KeyType(s.into())
+//     }
+// }
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Keybinds(Vec<(KeyRequest, KeyType)>);
@@ -65,6 +71,26 @@ impl Keybinds {
                 *k = key.clone()
             }
         }
+    }
+
+    pub fn lookup<K>(&self, req: K) -> Option<&KeyType>
+    where
+        K: TryInto<KeyRequest>,
+    {
+        if let Ok(req) = req.try_into() {
+            if let Some(pos) = self.iter().position(|(r, _)| *r == req) {
+                return self.0.get(pos).map(|(_, v)| v);
+            }
+        }
+        None
+    }
+
+    pub fn lookup_key(&self, key: impl Into<KeyType>) -> Option<&KeyRequest> {
+        let key = key.into();
+        if let Some(pos) = self.iter().position(|(_, k)| *k == key) {
+            return self.0.get(pos).map(|(k, _)| k);
+        }
+        None
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &(KeyRequest, KeyType)> {
@@ -98,8 +124,8 @@ impl Default for Keybinds {
             (KeyRequest::SwapCaseStart, "".into()),
             (KeyRequest::SwapCaseEnd, "".into()),
             //
-            (KeyRequest::PrevBuffer, "C-n".into()),
-            (KeyRequest::NextBuffer, "C-p".into()),
+            (KeyRequest::PrevBuffer, "C-p".into()),
+            (KeyRequest::NextBuffer, "C-n".into()),
             //
             (KeyRequest::SwitchBuffer0, "C-0".into()),
             (KeyRequest::SwitchBuffer1, "C-1".into()),
@@ -178,15 +204,25 @@ impl fmt::Display for KeyRequest {
 impl TryFrom<String> for KeyRequest {
     type Error = ();
     fn try_from(s: String) -> Result<Self, Self::Error> {
+        KeyRequest::try_from(s.as_str())
+    }
+}
+
+impl<'a> TryFrom<&'a str> for KeyRequest {
+    type Error = ();
+    fn try_from(s: &'a str) -> Result<Self, Self::Error> {
         use self::KeyRequest::*;
         fn unsnakecase(s: &str) -> String {
             let mut buf = String::new();
+            let mut prev = false;
             for (i, c) in s.chars().enumerate() {
-                if i == 0 {
+                if i == 0 || prev {
                     buf.push(c.to_ascii_uppercase());
+                    prev = false;
                     continue;
                 }
                 if c == '_' {
+                    prev = true;
                     continue;
                 }
                 buf.push(c)

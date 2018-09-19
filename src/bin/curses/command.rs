@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::convert::TryFrom;
 use std::sync::{Arc, RwLock};
 
 use super::*;
@@ -72,6 +73,7 @@ impl Processor {
         self.map.insert("/part", part_command);
         self.map.insert("/buffer", buffer_command);
         self.map.insert("/buffers", list_buffers_command);
+        self.map.insert("/bind", bind_command);
     }
 
     pub fn handle(&mut self, input: &str) -> CommandResult {
@@ -229,5 +231,39 @@ fn list_buffers_command(ctx: &Context) -> CommandResult {
     }
 
     ctx.queue.status(output);
+    Ok(())
+}
+
+fn bind_command(ctx: &Context) -> CommandResult {
+    match (ctx.parts.get(0), ctx.parts.get(1)) {
+        (None, None) => {
+            let keybinds = &ctx.config.read().unwrap().keybinds;
+            for (k, v) in keybinds.iter() {
+                ctx.queue.status(&format!("{} -> '{}'", k, v))
+            }
+        }
+        (Some(key), None) => {
+            let keybinds = &ctx.config.read().unwrap().keybinds;
+            if let Some(v) = keybinds.lookup(*key) {
+                ctx.queue.status(&format!("{} -> {}", key, v));
+            } else {
+                ctx.queue.status(&format!("unknown command: {}", key))
+            }
+        }
+        (Some(key), Some(value)) => {
+            let keybinds = &mut ctx.config.write().unwrap().keybinds;
+            if let Ok(req) = KeyRequest::try_from(*key) {
+                if let Some(v) = keybinds.lookup(req) {
+                    let next = KeyType::from(*value);
+                    ctx.queue.status(&format!("{}: {} -> {}", key, v, next));
+                    keybinds.insert(next, req);
+                }
+            } else {
+                ctx.queue.status(&format!("unknown command: {}", key))
+            }
+        }
+        _ => {}
+    }
+
     Ok(())
 }
