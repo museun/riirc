@@ -1,3 +1,7 @@
+extern crate pancurses;
+extern crate riirc;
+extern crate toml_document;
+
 mod command;
 use self::command::Processor;
 
@@ -19,8 +23,12 @@ use self::state::State;
 mod messagequeue;
 use self::messagequeue::*;
 
+mod colors;
+use self::colors::*;
+
 pub mod gui;
-pub use self::gui::{Gui, RunState};
+pub use self::gui::Gui;
+use self::gui::Window;
 
 mod keybinds;
 pub use self::keybinds::*;

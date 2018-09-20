@@ -46,7 +46,6 @@ impl InputWindow {
         let window = Arc::new(WindowWrapper(window));
         window.nodelay(true);
         window.keypad(true);
-        pancurses::noecho();
 
         let max = window.get_max_x() as usize;
         let buffer = InputBuffer::new(max, Arc::clone(&window));
@@ -59,16 +58,16 @@ impl InputWindow {
         }
     }
 
-    pub fn read_input(&mut self) -> Result<ReadType, Error> {
+    pub fn read_input(&mut self) -> ReadType {
         use pancurses::Input::*;
         match self.window.getch() {
             Some(Character(ch)) => self.handle_input_key(ch),
             Some(ch) => self.handle_other_key(ch),
-            _ => Ok(ReadType::None),
+            _ => ReadType::None,
         }
     }
 
-    fn handle_other_key(&mut self, input: pancurses::Input) -> Result<ReadType, Error> {
+    fn handle_other_key(&mut self, input: pancurses::Input) -> ReadType {
         use pancurses::Input::*;
 
         let cmd = match input {
@@ -80,42 +79,50 @@ impl InputWindow {
             KeySResume => &Command::Move(Move::ForwardWord),
             KeyDC => &Command::Delete(Move::Forward),
             KeyF1 | KeyF2 | KeyF3 | KeyF4 | KeyF5 | KeyF6 | KeyF7 | KeyF8 | KeyF9 | KeyF10
-            | KeyF11 | KeyF12 => return Ok(ReadType::FKey(input)),
-            _ => return Err(Error::UnknownInput(input)),
+            | KeyF11 | KeyF12 => return ReadType::FKey(input),
+            key => {
+                debug!("unknown input: {:?}", key);
+                return ReadType::None;
+            }
         };
 
         self.buffer.handle_command(cmd);
-        Ok(ReadType::None)
+        ReadType::None
     }
 
-    fn handle_modified_key(&mut self, key: &Key) -> Result<ReadType, Error> {
+    fn handle_modified_key(&mut self, key: &Key) -> ReadType {
         use self::{KeyKind::*, Mod::*};
         use std::convert::TryFrom;
 
-        let keybind = KeyType::from(*key);
-        if let Some(req) = { self.config.read().unwrap().keybinds.get(&keybind) } {
+        match (&key.modifier, &key.kind) {
+            (None, Backspace) => {
+                self.buffer.handle_command(&Command::Delete(Move::Backward));
+                self.window.refresh();
+                return ReadType::None;
+            }
+            (None, Enter) => {
+                let buf = self.buffer.line().into_iter().collect();
+                return ReadType::Line(buf);
+            }
+            _ => {}
+        }
+
+        if let Some(req) = {
+            let keybind = KeyType::from(*key);
+            self.config.read().unwrap().keybinds.get(&keybind)
+        } {
+            trace!("req: {:?}", req);
             if let Ok(cmd) = messagequeue::Request::try_from(*req) {
-                self.queue.push(cmd)
+                self.queue.push(cmd);
             }
             if let Ok(cmd) = inputbuffer::Command::try_from(*req) {
                 self.buffer.handle_command(&cmd);
             }
         }
-
-        match (&key.modifier, &key.kind) {
-            (None, Backspace) => self.buffer.handle_command(&Command::Delete(Move::Backward)),
-            (None, Enter) => {
-                let buf = self.buffer.line().into_iter().collect();
-                return Ok(ReadType::Line(buf));
-            }
-            _ => trace!("got unknown key: {:?}", key),
-        }
-
-        self.window.refresh();
-        Ok(ReadType::None)
+        ReadType::None
     }
 
-    fn handle_input_key(&mut self, ch: char) -> Result<ReadType, Error> {
+    fn handle_input_key(&mut self, ch: char) -> ReadType {
         if let Some(key) = Key::parse(ch as u16) {
             match (&key.modifier, &key.kind) {
                 (Mod::None, KeyKind::Other(_))
@@ -133,18 +140,14 @@ impl InputWindow {
         }
 
         self.buffer.handle_command(&Command::Append(ch));
-        Ok(ReadType::None)
+        ReadType::None
     }
 
     pub fn clear_input(&mut self) {
+        trace!("clearing input");
         self.buffer.clear();
         self.window.clear();
     }
-}
-
-#[derive(Debug, PartialEq)]
-pub enum Error {
-    UnknownInput(pancurses::Input),
 }
 
 #[derive(Debug, PartialEq)]

@@ -1,5 +1,6 @@
 #[macro_use]
 extern crate log;
+extern crate chrono;
 extern crate crossbeam_channel;
 
 pub mod irc;

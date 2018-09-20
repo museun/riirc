@@ -4,10 +4,6 @@
 #[macro_use]
 extern crate log;
 extern crate env_logger;
-extern crate pancurses;
-extern crate toml_document;
-
-extern crate riirc;
 
 mod curses;
 
@@ -25,11 +21,5 @@ fn main() {
         }
     };
 
-    let mut ui = curses::Gui::new(config);
-    loop {
-        match ui.run() {
-            curses::RunState::Exit => return,
-            curses::RunState::Continue => continue,
-        }
-    }
+    curses::Gui::new(config).run();
 }

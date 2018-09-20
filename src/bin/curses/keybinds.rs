@@ -45,12 +45,6 @@ impl<'a> From<&'a str> for KeyType {
     }
 }
 
-// impl From<&'static str> for KeyType {
-//     fn from(s: &'static str) -> Self {
-//         KeyType(s.into())
-//     }
-// }
-
 #[derive(Debug, PartialEq, Clone)]
 pub struct Keybinds(Vec<(KeyRequest, KeyType)>);
 
@@ -348,15 +342,6 @@ pub struct Key {
 
 impl Key {
     pub fn parse(v: u16) -> Option<Self> {
-        // let mut modifier = match v >> 8 {
-        //     0xEC => Mod::Alt,
-        //     v => match v >> 12 {
-        //         0x000 => Mod::Ctrl,
-        //         _ => Mod::None,
-        //     },
-        // };
-
-        // we figure it out in the parser
         let mut modifier = Mod::None;
         let kind = KeyKind::new(v, &mut modifier)?;
         Some(Key { modifier, kind })
@@ -377,7 +362,6 @@ pub enum KeyKind {
 #[rustfmt::skip]
 impl KeyKind {
     pub fn new(v: u16, m: &mut Mod) -> Option<KeyKind> {
-        eprintln!("0x{:04X}", v);
 
         use self::KeyKind::*;
         let key = match v {
@@ -399,6 +383,8 @@ impl KeyKind {
 
             _ => { *m = Mod::None; Other((v as u8) as char) },
         };
+
+        eprintln!("0x{:04X} | {:>3} | {:?}", v, v, key);
 
         Some(key)
     }

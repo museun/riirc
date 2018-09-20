@@ -19,7 +19,7 @@ pub enum Error {
 }
 
 pub struct Client {
-    state: Arc<RwLock<State>>,
+    state: Arc<State>,
     inner: Arc<Inner>,
     errors: channel::Receiver<Error>,
 }
@@ -29,7 +29,7 @@ impl Client {
         let (err_tx, err_rx) = channel::bounded(8);
 
         let this = Self {
-            state: Arc::new(RwLock::new(State::new())),
+            state: Arc::new(State::new()),
             inner: Arc::new(Inner {
                 stream: Mutex::new(None),
                 buf: RwLock::new(VecDeque::new()),
@@ -80,9 +80,7 @@ impl Client {
                 };
 
                 inner.update(&msg, &Arc::clone(&state));
-
-                let now = Instant::now();
-                state.write().unwrap().backlog.push((now, msg));
+                state.push_message((Instant::now(), msg));
             }
 
             err_tx.send(Error::EndOfStream);
@@ -97,54 +95,24 @@ impl Client {
     }
 
     pub fn join_channel(&self, chan: impl AsRef<str>) -> bool {
-        {
-            let state = &*self.state.read().unwrap();
-            if state.channels.contains_key(chan.as_ref()) {
-                return false;
-            }
+        if self.state.has_channel(chan.as_ref()) {
+            return false;
         }
-
         self.inner.join(chan, None);
         true
     }
 
     pub fn leave_channel(&self, chan: impl AsRef<str>, reason: impl AsRef<str>) -> bool {
-        {
-            let state = &*self.state.read().unwrap();
-            if !state.channels.contains_key(chan.as_ref()) {
-                return false;
-            }
+        if !self.state.has_channel(chan.as_ref()) {
+            return false;
         }
 
         self.inner.part(chan, reason);
         true
     }
 
-    pub fn is_from_self(&self, msg: &Message) -> bool {
-        let state = &*self.state.read().unwrap();
-        state.is_from_self(msg)
-    }
-
-    pub fn nickname(&self) -> Option<String> {
-        let state = &*self.state.read().unwrap();
-        // TODO get rid of this copy
-        state.nickname.as_ref().cloned()
-    }
-
-    // XXX: need to incorporate these into the GUI state
-    pub fn next_message(&self) -> Option<(Instant, Message)> {
-        let state = &mut self.state.write().unwrap();
-        state.backlog.pop()
-    }
-
-    pub fn has_queued_message(&self) -> bool {
-        let state = &*self.state.write().unwrap();
-        !state.backlog.is_empty()
-    }
-
-    pub fn get_channel(&self, name: impl AsRef<str>) -> Option<Arc<Channel>> {
-        let state = &*self.state.read().unwrap();
-        state.channels.get(name.as_ref()).map(Arc::clone)
+    pub fn state(&self) -> Arc<State> {
+        Arc::clone(&self.state)
     }
 }
 
@@ -165,77 +133,75 @@ struct Inner {
 }
 
 impl Inner {
-    fn get_nick_for(msg: &Message) -> &str {
-        match &msg.prefix {
-            Some(Prefix::User { nick, .. }) => nick,
-            _ => unreachable!(),
-        }
-    }
-
-    #[allow(unused_variables)]
-    fn update(&self, msg: &Message, state: &Arc<RwLock<State>>) {
-        let state = &mut state.write().unwrap();
+    fn update(&self, msg: &Message, state: &Arc<State>) {
         let from_self = state.is_from_self(&msg);
 
         match &msg.command {
             Command::Ping { token } => self.pong(token),
 
-            // TODO target here is a vec..
-            Command::Join { target, key } => {
+            Command::Join { channel, key: _key } => {
                 if from_self {
-                    state.new_channel(&target[0]);
+                    state.new_channel(&channel);
                     return;
                 }
 
-                let nick = Self::get_nick_for(&msg);
-                state.nick_join(&target[0], &nick);
+                let nick = msg.get_nick();
+                state.nick_join(&channel, &nick);
             }
 
-            // TODO target here is a vec..
-            Command::Part { target, reason } => {
+            Command::Part {
+                channel,
+                reason: _reason,
+            } => {
                 if from_self {
-                    state.remove_channel(&target[0]);
+                    state.remove_channel(&channel);
                     return;
                 }
 
-                let nick = Self::get_nick_for(&msg);
-                state.nick_part(&target[0], &nick);
+                let nick = msg.get_nick();
+                state.nick_part(&channel, &nick);
             }
 
-            Command::Quit { reason } => {
+            Command::Quit { reason: _reason } => {
                 if from_self {
                     // let the client clean up
                     return;
                 }
 
-                let nick = Self::get_nick_for(&msg);
+                let nick = msg.get_nick();
                 state.remove_nick(&nick)
             }
 
             Command::Nick { nickname } => {
                 if from_self {
-                    state.nickname = Some(nickname.to_owned());
+                    state.set_nickname(nickname);
                     return;
                 }
 
-                let old = Self::get_nick_for(&msg);
+                let old = msg.get_nick();
                 state.update_nick(&old, &nickname);
             }
 
-            Command::Other { command, params } => {
+            Command::Other {
+                command: _command,
+                params: _params,
+            } => {
                 // need to periodically do a /who or /names #channel
             }
 
             Command::Reply { numeric, params } => match numeric {
                 1 => {
                     let name = &params[0];
-                    state.nickname = Some(name.to_owned())
+                    state.set_nickname(name);
                 }
                 433 => self.nick(format!("{}_", params[1])),
-                // TODO more numeric
+                // TODO more numerics
                 _ => {}
             },
-            _ => {}
+
+            _ => {
+                // what should be done here?
+            }
         };
     }
 

@@ -1,5 +1,6 @@
-use crate::irc::command::{Command, Error as CommandError};
-use crate::irc::prefix::{Error as PrefixError, Prefix};
+use crate::irc::command::Error as CommandError;
+use crate::irc::prefix::Error as PrefixError;
+use crate::irc::{command::Command, prefix::Prefix};
 
 #[derive(Debug, PartialEq)]
 pub enum Error {
@@ -31,6 +32,14 @@ impl Message {
             command: Command::parse(&input).map_err(Error::CommandError)?,
             prefix: prefix.map(|(p, _)| p),
         })
+    }
+
+    /// this panics if invalid state
+    pub fn get_nick(&self) -> &str {
+        match &self.prefix {
+            Some(Prefix::User { nick, .. }) => nick,
+            _ => unreachable!(),
+        }
     }
 }
 

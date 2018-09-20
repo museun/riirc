@@ -17,12 +17,15 @@ pub enum Command {
         data: String,
         is_notice: bool,
     },
+
+    // TODO support multiple channels
     Join {
-        target: Vec<String>,
-        key: Vec<String>,
+        channel: String,
+        key: Option<String>,
     },
+    // TODO support multiple channels
     Part {
-        target: Vec<String>,
+        channel: String,
         reason: Option<String>,
     },
     Quit {
@@ -55,96 +58,102 @@ impl Command {
     pub fn parse(input: &str) -> Result<Self, Error> {
         let pos = input.find(' ').ok_or_else(|| Error::MissingCommand)?;
 
-        fn get_data(s: &str) -> Result<(&str, &str), Error> {
-            let (l, r) = s.split_at(s.find(':').ok_or_else(|| Error::MissingData)?);
-            let (l, r) = (l.trim(), &r.trim()[1..]);
-            if l.is_empty() {
-                return Err(Error::MissingTarget);
-            }
-
-            if r.is_empty() {
-                return Err(Error::MissingData);
-            }
-            Ok((l, r))
-        }
-
         let (command, rest) = input.split_at(pos);
         let (command, rest) = (command.trim(), rest.trim());
 
-        match command {
+        let msg = match command {
             "PRIVMSG" | "NOTICE" => {
-                let (target, data) = get_data(rest)?;
-                Ok(Command::Privmsg {
+                let (l, r) = rest.split_at(rest.find(':').ok_or_else(|| Error::MissingData)?);
+                let (target, data) = (l.trim(), &r.trim()[1..]);
+                if target.is_empty() {
+                    return Err(Error::MissingTarget);
+                }
+
+                if data.is_empty() {
+                    return Err(Error::MissingData);
+                }
+
+                // TODO determine if target is a channel
+                Command::Privmsg {
                     target: target.into(),
                     data: data.into(),
                     is_notice: command == "NOTICE",
-                })
+                }
             }
+
             "JOIN" => {
                 if rest.is_empty() {
                     return Err(Error::MissingTarget);
                 }
 
                 let mut parts = rest.split(' ');
-                let target = match parts.next() {
-                    Some(target) => target[1..]
-                        .split(',')
-                        .map(|s| s.to_owned())
-                        .collect::<Vec<_>>(),
-                    None => return Err(Error::MissingTarget),
-                };
-                let key = match parts.next() {
-                    Some(key) => key.split(',').map(|s| s.to_owned()).collect::<Vec<_>>(),
-                    None => vec![],
-                };
+                let channel = parts
+                    .next()
+                    .ok_or_else(|| Error::MissingTarget)?
+                    .split(',')
+                    .next()
+                    .unwrap()[1..]
+                    .to_owned();
+                let key = parts
+                    .next()
+                    .and_then(|s| s.split(',').next().map(|s| s.to_owned()));
 
-                Ok(Command::Join { target, key })
+                Command::Join { channel, key }
             }
+
             "PART" => {
                 if rest.is_empty() {
                     return Err(Error::MissingTarget);
                 }
 
                 let mut parts = rest.split(' ');
-                let target = match parts.next() {
-                    Some(target) => target.split(',').map(|s| s.to_owned()).collect::<Vec<_>>(),
-                    None => return Err(Error::MissingTarget),
-                };
-
+                let channel = parts
+                    .next()
+                    .ok_or_else(|| Error::MissingTarget)?
+                    .split(',')
+                    .next()
+                    .unwrap()
+                    .to_owned();
                 let reason = parts.next().map(|s| s.to_owned());
-                Ok(Command::Part { target, reason })
+
+                Command::Part { channel, reason }
             }
+
             "QUIT" => {
                 if rest.get(0..1) != Some(":") {
                     return Err(Error::MissingData);
                 }
 
-                Ok(Command::Quit {
+                Command::Quit {
                     reason: rest[1..].to_owned(),
-                })
+                }
             }
+
             "NICK" => {
                 if !is_valid_nick(rest) || rest.is_empty() {
                     return Err(Error::InvalidNickname);
                 }
 
-                Ok(Command::Nick {
+                Command::Nick {
                     nickname: rest.to_owned(),
-                })
+                }
             }
-            "PING" => Ok(Command::Ping {
+
+            "PING" => Command::Ping {
                 token: rest.to_owned(),
-            }),
-            "PONG" => Ok(Command::Pong {
+            },
+
+            "PONG" => Command::Pong {
                 target: rest.to_owned(),
-            }),
+            },
+
             "ERROR" => {
                 if rest.get(0..1) != Some(":") {
                     return Err(Error::MissingData);
                 }
-                Ok(Command::Error {
+                Command::Error {
                     message: rest[1..].to_owned(),
-                })
+                }
             }
 
             command => {
@@ -165,19 +174,20 @@ impl Command {
                 };
 
                 if let Ok(n) = command.parse::<u16>() {
-                    Ok(Command::Reply { numeric: n, params })
+                    Command::Reply { numeric: n, params }
                 } else {
-                    Ok(Command::Other {
+                    Command::Other {
                         command: command.to_owned(),
                         params,
-                    })
+                    }
                 }
             }
-        }
+        };
+
+        Ok(msg)
     }
 }
 
-/*
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -189,8 +199,8 @@ mod tests {
         assert_eq!(
             command,
             Ok(Command::Privmsg {
-                target: "#testchannel",
-                data: "this is a message",
+                target: "#testchannel".into(),
+                data: "this is a message".into(),
                 is_notice: false
             })
         );
@@ -215,8 +225,8 @@ mod tests {
         assert_eq!(
             command,
             Ok(Command::Privmsg {
-                target: "#testchannel",
-                data: "this is a message",
+                target: "#testchannel".into(),
+                data: "this is a message".into(),
                 is_notice: true
             })
         );
@@ -225,22 +235,10 @@ mod tests {
     #[test]
     fn parse_join() {
         let inputs = &[
-            (
-                "JOIN #testchannel", // stop
-                (vec!["#testchannel"], vec![]),
-            ),
-            (
-                "JOIN #testchannel,&channel",
-                (vec!["#testchannel", "&channel"], vec![]),
-            ),
-            (
-                "JOIN #testchannel,&channel key1",
-                (vec!["#testchannel", "&channel"], vec!["key1"]),
-            ),
-            (
-                "JOIN #testchannel,&channel key1,key2",
-                (vec!["#testchannel", "&channel"], vec!["key1", "key2"]),
-            ),
+            ("JOIN #test", ("#test", None)),
+            ("JOIN #test,&channel", ("#test", None)),
+            ("JOIN #test,&channel key1", ("#test", Some("key1"))),
+            ("JOIN #test,&channel key1,key2", ("#test", Some("key1"))),
         ];
 
         for input in inputs {
@@ -248,8 +246,8 @@ mod tests {
             assert_eq!(
                 command,
                 Ok(Command::Join {
-                    target: (input.1).0.clone(),
-                    key: (input.1).1.clone(),
+                    channel: (input.1).0.into(),
+                    key: (input.1).1.map(|s| s.into()),
                 })
             );
         }
@@ -261,18 +259,9 @@ mod tests {
     #[test]
     fn parse_part() {
         let inputs = &[
-            (
-                "PART #testchannel", // stop
-                (vec!["#testchannel"], None),
-            ),
-            (
-                "PART #testchannel,&channel",
-                (vec!["#testchannel", "&channel"], None),
-            ),
-            (
-                "PART #testchannel,&channel bye",
-                (vec!["#testchannel", "&channel"], Some("bye")),
-            ),
+            ("PART #test", ("#test", None)),
+            ("PART #test,&channel", ("#test", None)),
+            ("PART #test,&channel bye", ("#test", Some("bye"))),
         ];
 
         for input in inputs {
@@ -280,8 +269,8 @@ mod tests {
             assert_eq!(
                 command,
                 Ok(Command::Part {
-                    target: (input.1).0.clone(),
-                    reason: (input.1).1,
+                    channel: (input.1).0.into(),
+                    reason: (input.1).1.map(|s| s.into()),
                 })
             );
         }
@@ -297,7 +286,7 @@ mod tests {
         assert_eq!(
             command,
             Ok(Command::Quit {
-                reason: "this is a quit message"
+                reason: "this is a quit message".into()
             })
         );
 
@@ -312,7 +301,7 @@ mod tests {
         assert_eq!(
             command,
             Ok(Command::Nick {
-                nickname: "test_user"
+                nickname: "test_user".into()
             })
         );
 
@@ -326,7 +315,9 @@ mod tests {
         for input in inputs {
             assert_eq!(
                 Command::parse(input.0),
-                Ok(Command::Ping { token: input.1 })
+                Ok(Command::Ping {
+                    token: input.1.into()
+                })
             );
         }
     }
@@ -337,7 +328,9 @@ mod tests {
         for input in inputs {
             assert_eq!(
                 Command::parse(input.0),
-                Ok(Command::Pong { target: input.1 })
+                Ok(Command::Pong {
+                    target: input.1.into()
+                })
             );
         }
     }
@@ -346,7 +339,9 @@ mod tests {
     fn parse_error() {
         assert_eq!(
             Command::parse("ERROR :test"),
-            Ok(Command::Error { message: "test" })
+            Ok(Command::Error {
+                message: "test".into()
+            })
         );
 
         assert_eq!(Command::parse("ERROR test"), Err(Error::MissingData));
@@ -358,7 +353,7 @@ mod tests {
             Command::parse("001 :Welcome to the Internet Relay Network test!user@localhost"),
             Ok(Command::Reply {
                 numeric: 001,
-                params: vec!["Welcome to the Internet Relay Network test!user@localhost"]
+                params: vec!["Welcome to the Internet Relay Network test!user@localhost".into()]
             })
         );
 
@@ -367,6 +362,9 @@ mod tests {
             Ok(Command::Reply {
                 numeric: 312,
                 params: vec!["user", "irc.localhost", "some info"]
+                    .into_iter()
+                    .map(|s| s.into())
+                    .collect()
             })
         );
     }
@@ -376,17 +374,22 @@ mod tests {
         assert_eq!(
             Command::parse("WHOIS eff.org trillian"),
             Ok(Command::Other {
-                command: "WHOIS",
+                command: "WHOIS".into(),
                 params: vec!["eff.org", "trillian"]
+                    .into_iter()
+                    .map(|s| s.into())
+                    .collect()
             })
         );
         assert_eq!(
             Command::parse("USER guest 0 * :Some user"),
             Ok(Command::Other {
-                command: "USER",
+                command: "USER".into(),
                 params: vec!["guest", "0", "*", "Some user"]
+                    .into_iter()
+                    .map(|s| s.into())
+                    .collect()
             })
         );
     }
 }
-*/

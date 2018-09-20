@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 use std::sync::{Arc, RwLock};
+use std::time::Instant;
 
 use crossbeam_channel as channel;
 
@@ -23,10 +24,12 @@ struct Inner {
     config: Arc<RwLock<Config>>,
 }
 
+const BUFFER_MAX_SIZE: usize = 25 * 5;
+
 impl State {
     pub fn new(queue: Arc<MessageQueue>, config: Arc<RwLock<Config>>) -> Self {
         let mut buffers = VecDeque::new();
-        buffers.push_back(Arc::new(Buffer::new("*status")));
+        buffers.push_back(Arc::new(Buffer::new("*status", BUFFER_MAX_SIZE)));
 
         Self {
             inner: RwLock::new(Inner {
@@ -69,7 +72,7 @@ impl State {
                 }
                 pos
             } else {
-                let new = Arc::new(Buffer::new(name));
+                let new = Arc::new(Buffer::new(name, BUFFER_MAX_SIZE));
                 inner.buffers.push_back(new);
                 if activate {
                     trace!("created, forcing activation");
@@ -138,9 +141,9 @@ impl State {
 
         let name = buffer.name().to_string();
         self.queue.push(Request::Clear(false));
-        for msg in buffer.messages() {
+        for output in buffer.messages() {
             self.queue
-                .push(Request::Target(inner.active_buffer, msg.to_string()))
+                .push(Request::Target(inner.active_buffer, output))
         }
     }
 
@@ -177,14 +180,25 @@ impl State {
 
     pub fn send_line(&self, data: impl AsRef<str>) {
         if self.inner.read().unwrap().client.is_none() {
-            self.queue.status("not connected to a server");
+            let output = Output::new()
+                .fg(Color::Red)
+                .add("error: ")
+                .add("not connected to server")
+                .build();
+            self.queue.status(output);
             return;
         }
 
         let (index, buffer) = self.current_buffer();
         if buffer.name().starts_with('*') {
-            self.queue
-                .status(format!("cannot send to {}", buffer.name()));
+            let output = Output::new()
+                .fg(Color::Red)
+                .add("error: ")
+                .add("cannot send to: ")
+                .fg(Color::Cyan)
+                .add(buffer.name())
+                .build();
+            self.queue.status(output);
             return;
         }
 
@@ -192,14 +206,21 @@ impl State {
         let nickname = {
             let client = self.client().unwrap();
             client.privmsg(&buffer.name(), data);
+
             client
+                .state()
                 .nickname()
                 .expect("client should have a valid nickname")
         };
 
-        // TODO this should use a Message Formatter trait
-        let msg = format!("{}: {}", nickname, data);
-        self.queue.push(Request::Queue(index, msg));
+        let ts = timestamp(Instant::now());
+
+        let mut output = Output::new();
+        output.add(ts).add(" ");
+        output.fg(Color::Green).add(nickname);
+        let output = output.add(" ").add(data).build();
+
+        self.queue.push(Request::Queue(index, output));
     }
 
     pub fn set_client(&self, client: riirc::Client) {
@@ -224,29 +245,12 @@ impl State {
         inner.errors.as_ref().map(Arc::clone)
     }
 
-    pub fn sync_state(&self) {
-        if self.client().is_none() {
-            return;
-        }
-
-        let (ts, msg) = {
-            let inner = &mut self.inner.write().unwrap();
-            let res = inner
-                .client
-                .as_ref()
-                .map(Arc::clone)
-                .and_then(|c| c.next_message());
-            if res.is_none() {
-                return;
-            }
-            res.unwrap()
-        };
-
+    // TODO remove this
+    pub fn update(&self) -> Option<()> {
+        let client = self.client()?;
+        let (ts, msg) = client.state().next_message()?;
         let (current, active) = self.current_buffer();
-        let me = {
-            let client = self.client().unwrap();
-            client.nickname()
-        };
+        let me = client.state().nickname();
 
         match &msg.command {
             Command::Privmsg {
@@ -256,10 +260,11 @@ impl State {
             }
                 if !is_notice =>
             {
-                let target = if me.is_some() && me.as_ref().unwrap() == target {
-                    Self::get_nick_for(&msg).or_else(|| Some(target)).unwrap()
-                } else {
-                    target
+                let target = match me {
+                    Some(ref me) if me == target => {
+                        Self::get_nick_for(&msg).or_else(|| Some(&target)).unwrap()
+                    }
+                    _ => target,
                 };
 
                 let (pos, buf) = match self.get_buffer_for_name(target) {
@@ -267,54 +272,99 @@ impl State {
                     None => self.new_buffer(target, false),
                 };
 
-                // TODO add timestamp
-                if let Some(nick) = Self::get_nick_for(&msg) {
-                    let data = format!("{}: {}", nick, data);
-                    buf.push_message(&data);
+                let nick = Self::get_nick_for(&msg)?;
+                let ts = timestamp(ts);
 
-                    if current == pos as usize {
-                        self.queue.push(Request::Target(current, data))
-                    }
+                let mut output = Output::new();
+                output.add(ts).add(" ");
+                output.fg(Color::Red).add(nick);
+                let output = output.add(" ").add(data).build();
+
+                buf.push_message(&output);
+
+                if current == pos as usize {
+                    self.queue.push(Request::Target(current, output));
                 }
             }
 
             // Notices go to the status window
             Command::Privmsg { target, data, .. } => {
-                let inner = &mut self.inner.write().unwrap();
-                let buf = Arc::clone(&inner.buffers[0]);
+                let nick = Self::get_nick_for(&msg)?;
 
-                // TODO add timestamp
-                if let Some(nick) = Self::get_nick_for(&msg) {
-                    let data = if me.is_none() || target == me.as_ref().unwrap() {
-                        format!("-{}- {}", nick, data)
-                    } else {
-                        format!("-{} @ {}- {}", nick, target, data)
-                    };
+                let output = if me.is_none() || *target == me.unwrap() {
+                    Output::new().add(format!("-{}- {}", nick, data)).build()
+                } else {
+                    Output::new()
+                        .add(format!("-{} @ {}- {}", nick, target, data))
+                        .build()
+                };
 
-                    buf.push_message(&data);
-                    if current == 0 {
-                        self.queue.push(Request::Target(current, data))
+                {
+                    let inner = &mut self.inner.write().unwrap();
+                    inner.buffers[0].push_message(&output);
+                }
+                if current == 0 {
+                    self.queue.push(Request::Target(current, output));
+                }
+            }
+
+            Command::Join { channel, .. } => {
+                trace!("join: {}", channel);
+                let (pos, buf) = self.get_buffer_for_name(channel).or_else(|| {
+                    trace!("cannot get buffer for: {}", channel);
+                    None
+                })?;
+                let nick = Self::get_nick_for(&msg).or_else(|| {
+                    trace!("cannot get nick for: {}", channel);
+                    None
+                })?;
+
+                let mut output = Output::new();
+                let output = if *nick == me.expect("self nick is required") {
+                    output
+                        .fg(Color::Green)
+                        .add("joining")
+                        .add(": ")
+                        .add(channel)
+                        .build()
+                } else {
+                    output
+                        .fg(Color::Cyan)
+                        .add(nick)
+                        .fg(Color::Green)
+                        .add(" joined ")
+                        .add(channel)
+                        .build()
+                };
+                self.queue.queue(pos, output)
+            }
+
+            Command::Part {
+                channel,
+                ref reason,
+            } => {
+                let (pos, buf) = self.get_buffer_for_name(channel)?;
+                let nick = Self::get_nick_for(&msg)?;
+                if *nick != me.expect("self nick is required") {
+                    let mut output = Output::new();
+                    output
+                        .fg(Color::Cyan)
+                        .add(nick)
+                        .fg(Color::Green)
+                        .add(" left ")
+                        .add(channel);
+
+                    if let Some(reason) = reason {
+                        output.add(": ").add(reason);
                     }
+                    self.queue.queue(pos, output.build());
                 }
             }
-
-            Command::Join { target, .. } => {
-                let target = &target[0];
-
-                let (pos, buf) = self
-                    .get_buffer_for_name(target)
-                    .expect("buffer should have been created");
-
-                let nick = Self::get_nick_for(&msg).expect("join requires a name");
-                if *nick == me.expect("self nick is required") {
-                    self.queue.queue(pos, &format!("joining: {}", target));
-                }
-            }
-            Command::Part { target, reason } => {}
 
             _ => {}
         }
 
+        Some(())
         // TODO synchronize the users
     }
 
@@ -325,4 +375,12 @@ impl State {
             _ => None,
         }
     }
+}
+
+// TODO use the timestamp from the client
+fn timestamp(_instant: Instant) -> String {
+    use chrono::prelude::*;
+    let now: DateTime<Local> = Local::now();
+
+    format!("{:02}{:02}{:02}", now.hour(), now.minute(), now.second())
 }

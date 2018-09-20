@@ -1,19 +1,18 @@
+use super::*;
+use riirc::Queue;
 use std::sync::RwLock;
 
-use riirc::Queue;
-
-// TODO impl Eq for this
 pub struct Buffer {
     name: String,
-    messages: RwLock<Queue<String>>, // TODO use a Cow here
+    messages: RwLock<Queue<Output>>, // TODO use a Cow here
 }
 
 impl Buffer {
-    pub fn new(name: impl AsRef<str>) -> Self {
+    pub fn new(name: impl AsRef<str>, max: usize) -> Self {
         let name = name.as_ref().to_owned();
         Self {
             name,
-            messages: RwLock::new(Queue::new(125)),
+            messages: RwLock::new(Queue::new(max)),
         }
     }
 
@@ -21,12 +20,12 @@ impl Buffer {
         &self.name
     }
 
-    pub fn push_message(&self, msg: &str) {
-        trace!("{} <- {}", self.name(), msg);
-        self.messages.write().unwrap().push(msg.into());
+    pub fn push_message(&self, msg: &Output) {
+        trace!("{} <- {}", self.name(), msg.data);
+        self.messages.write().unwrap().push(msg.clone());
     }
 
-    pub fn most_recent(&self) -> Option<String> {
+    pub fn most_recent(&self) -> Option<Output> {
         self.messages.read().unwrap().back().cloned()
     }
 
@@ -35,8 +34,8 @@ impl Buffer {
     }
 
     // this copies all of the messages
-    pub fn messages(&self) -> Vec<String> {
+    pub fn messages(&self) -> Vec<Output> {
         let messages = &self.messages.read().unwrap();
-        messages.iter().map(|s| s.to_string()).collect()
+        messages.iter().cloned().collect()
     }
 }

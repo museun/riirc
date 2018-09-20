@@ -62,6 +62,7 @@ impl Processor {
         self.map.insert("/buffer", buffer_command);
         self.map.insert("/buffers", list_buffers_command);
         self.map.insert("/bind", bind_command);
+        self.map.insert("/rehash", rehash_command);
     }
 
     pub fn dispatch(&mut self, input: &str) -> CommandResult {
@@ -78,7 +79,14 @@ impl Processor {
         let mut input = input.split(' ');
         let query = input.next().unwrap();
         if !self.map.contains_key(query) {
-            self.queue.status(format!("unknown command: {}", query));
+            let output = Output::new()
+                .fg(Color::Red)
+                .add("error: ")
+                .add("unknown command: ")
+                .fg(Color::Cyan)
+                .add(query)
+                .build();
+            self.queue.status(output);
             return Ok(());
         }
 
@@ -93,20 +101,7 @@ impl Processor {
             parts: &parts,
         };
 
-        // TODO make this better
-        func(&ctx).or_else(|err| {
-            use self::Error::*;
-            match err {
-                InvalidArgument(s) | InvalidBuffer(s) => ctx.queue.status(s),
-                ClientError(err) => ctx
-                    .queue
-                    .status(&format!("error from irc client: {:?}", err)),
-                AlreadyConnected => ctx.queue.status("already connected"),
-                NotConnected => ctx.queue.status("not connected"),
-                ForceExit => return Err(ForceExit),
-            };
-            Ok(())
-        })
+        func(&ctx)
     }
 }
 
@@ -127,7 +122,8 @@ fn assume_args(ctx: &Context, msg: &'static str) -> CommandResult {
 
 fn echo_command(ctx: &Context) -> CommandResult {
     for part in ctx.parts {
-        ctx.queue.status(part.to_string());
+        let output = Output::new().add(*part).build();
+        ctx.queue.status(output);
     }
     Ok(())
 }
@@ -138,8 +134,14 @@ fn connect_command(ctx: &Context) -> CommandResult {
     };
 
     let config = ctx.config.read().unwrap();
-    ctx.queue
-        .status(&format!("connecting to {}", &config.server));
+
+    let output = Output::new()
+        .fg(Color::Green)
+        .add("connecting to ")
+        .fg(Color::Cyan)
+        .add(&config.server)
+        .build();
+    ctx.queue.status(output);
 
     let client = riirc::Client::connect(&config.server).map_err(Error::ClientError)?;
     if !&config.pass.is_empty() {
@@ -211,16 +213,22 @@ fn list_buffers_command(ctx: &Context) -> CommandResult {
     let buffers = ctx.state.buffers();
     let len = ctx.state.buffers_len() - 1;
 
-    let mut output = String::from("buffers: ");
+    let mut output = Output::new();
+    output.fg(Color::White).add("buffers: ");
+
     for (n, buffer) in buffers.iter().enumerate() {
+        output
+            .fg(Color::BrightWhite)
+            .add(format!("{}", n))
+            .fg(Color::Cyan)
+            .add(buffer.name());
+
         if n < len {
-            output.push_str(&format!("{}:{}, ", n, buffer.name()))
-        } else {
-            output.push_str(&format!("{}:{}", n, buffer.name()))
+            output.add(",");
         }
     }
 
-    ctx.queue.status(output);
+    ctx.queue.status(output.build());
     Ok(())
 }
 
@@ -229,15 +237,36 @@ fn bind_command(ctx: &Context) -> CommandResult {
         (None, None) => {
             let keybinds = &ctx.config.read().unwrap().keybinds;
             for (k, v) in keybinds.iter() {
-                ctx.queue.status(&format!("{} -> '{}'", k, v))
+                let output = Output::new()
+                    .fg(Color::Yellow)
+                    .add(k.to_string())
+                    .add(" -> ")
+                    .fg(Color::Cyan)
+                    .add(v.to_string())
+                    .build();
+                ctx.queue.status(output)
             }
         }
         (Some(key), None) => {
             let keybinds = &ctx.config.read().unwrap().keybinds;
             if let Some(v) = keybinds.lookup(*key) {
-                ctx.queue.status(&format!("{} -> {}", key, v));
+                let output = Output::new()
+                    .fg(Color::Yellow)
+                    .add(key.to_string())
+                    .add(" -> ")
+                    .fg(Color::Cyan)
+                    .add(v.to_string())
+                    .build();
+                ctx.queue.status(output);
             } else {
-                ctx.queue.status(&format!("unknown command: {}", key))
+                let output = Output::new()
+                    .fg(Color::Red)
+                    .add("error: ")
+                    .add("unknown command: ")
+                    .fg(Color::Cyan)
+                    .add(*key)
+                    .build();
+                ctx.queue.status(output);
             }
         }
         (Some(key), Some(value)) => {
@@ -245,15 +274,58 @@ fn bind_command(ctx: &Context) -> CommandResult {
             if let Ok(req) = KeyRequest::try_from(*key) {
                 if let Some(v) = keybinds.lookup(req) {
                     let next = KeyType::from(*value);
-                    ctx.queue.status(&format!("{}: {} -> {}", key, v, next));
+                    let output = Output::new()
+                        .fg(Color::Yellow)
+                        .add(key.to_string())
+                        .fg(Color::Cyan)
+                        .add(" ")
+                        .add(v.to_string())
+                        .add(" -> ")
+                        .fg(Color::BrightGreen)
+                        .add(next.to_string())
+                        .build();
+                    ctx.queue.status(output);
+
                     keybinds.insert(next, req);
                 }
             } else {
-                ctx.queue.status(&format!("unknown command: {}", key))
+                let output = Output::new()
+                    .fg(Color::Red)
+                    .add("error: ")
+                    .add("unknown command: ")
+                    .fg(Color::Cyan)
+                    .add(*key)
+                    .build();
+                ctx.queue.status(output);
             }
         }
         _ => {}
     }
+
+    ctx.config.read().unwrap().save();
+    Ok(())
+}
+
+fn rehash_command(ctx: &Context) -> CommandResult {
+    match Config::load("riirc.toml") {
+        Ok(config) => {
+            let conf = &mut *ctx.config.write().unwrap();
+            *conf = config
+        }
+        Err(err) => {
+            let output = Output::new()
+                .fg(Color::Red)
+                .add("error: ")
+                .add("cannot load ")
+                .fg(Color::BrightWhite)
+                .add("config")
+                .add(" at ")
+                .fg(Color::Yellow)
+                .add("riirc.toml")
+                .build();
+            ctx.queue.status(output);
+        }
+    };
 
     Ok(())
 }

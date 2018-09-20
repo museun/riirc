@@ -12,10 +12,12 @@ impl<T> Queue<T> {
     }
 
     pub fn push(&mut self, data: T) -> Option<T> {
-        let mut out = None;
-        if self.queue.len() == self.queue.capacity() {
-            out = self.queue.pop_front();
-        }
+        let out = if self.queue.len() == self.queue.capacity() {
+            self.queue.pop_front()
+        } else {
+            None
+        };
+
         self.queue.push_back(data);
         out
     }

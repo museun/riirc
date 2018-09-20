@@ -71,10 +71,8 @@ impl Config {
             keybinds,
         })
     }
-}
 
-impl Drop for Config {
-    fn drop(&mut self) {
+    pub fn save(&self) {
         use toml_document::*;
 
         let mut doc = Document::new();

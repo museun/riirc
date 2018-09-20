@@ -1,3 +1,5 @@
+use super::*;
+
 use crossbeam_channel as channel;
 
 #[derive(Debug, PartialEq)]
@@ -11,8 +13,8 @@ pub enum Request {
     NextBuffer,
     PrevBuffer,
 
-    Queue(usize, String),  // buffer index
-    Target(usize, String), // buffer index
+    Queue(usize, Output),  // buffer index
+    Target(usize, Output), // buffer index
 }
 
 pub struct MessageQueue {
@@ -20,10 +22,9 @@ pub struct MessageQueue {
     reader: channel::Receiver<Request>,
 }
 
-// TODO add logging here
 impl MessageQueue {
     pub fn new() -> Self {
-        let (queue, reader) = channel::bounded(16);
+        let (queue, reader) = channel::unbounded();
         Self { queue, reader }
     }
 
@@ -32,16 +33,17 @@ impl MessageQueue {
         self.queue.send(req);
     }
 
-    pub fn queue(&self, buf: usize, data: impl AsRef<str>) {
-        self.push(Request::Queue(buf, data.as_ref().to_owned()));
+    // TODO impl Into<Output>
+    pub fn queue(&self, buf: usize, output: Output) {
+        self.push(Request::Queue(buf, output));
     }
 
-    pub fn status(&self, data: impl AsRef<str>) {
-        self.queue(0, data);
+    pub fn status(&self, output: Output) {
+        self.queue(0, output);
     }
 
     pub fn read_queue(&self) -> Vec<Request> {
-        let mut buf = vec![]; // TODO reader.len() as cap
+        let mut buf = Vec::with_capacity(self.reader.len());
         while let Some(req) = self.reader.try_recv() {
             buf.push(req)
         }
