@@ -6,12 +6,15 @@ pub mod prefix;
 
 mod channel;
 mod queue;
+mod state;
 
-pub(crate) use self::channel::*;
-
-pub use self::client::{Client, Error};
-pub use self::command::Command;
 pub use self::ircclient::IrcClient;
+
+use self::channel::*;
+use self::state::*;
+
+pub use self::client::{Client, Error as IrcError};
+pub use self::command::Command;
 pub use self::message::Message;
 pub use self::prefix::Prefix;
 pub use self::queue::Queue;

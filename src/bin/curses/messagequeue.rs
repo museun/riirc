@@ -1,5 +1,4 @@
-use std::collections::VecDeque;
-use std::sync::RwLock;
+use crossbeam_channel as channel;
 
 #[derive(Debug, PartialEq)]
 pub enum Request {
@@ -16,34 +15,44 @@ pub enum Request {
     Target(usize, String), // buffer index
 }
 
-#[derive(Default)]
 pub struct MessageQueue {
-    queue: RwLock<VecDeque<Request>>,
+    queue: channel::Sender<Request>,
+    reader: channel::Receiver<Request>,
 }
 
 // TODO add logging here
 impl MessageQueue {
     pub fn new() -> Self {
-        Self::default()
+        let (queue, reader) = channel::bounded(16);
+        Self { queue, reader }
     }
 
     pub fn push(&self, req: Request) {
-        self.queue.write().unwrap().push_back(req)
+        trace!("pushing: {:?}", req);
+        self.queue.send(req);
+    }
+
+    pub fn queue(&self, buf: usize, data: impl AsRef<str>) {
+        self.push(Request::Queue(buf, data.as_ref().to_owned()));
     }
 
     pub fn status(&self, data: impl AsRef<str>) {
-        self.push(Request::Queue(0, data.as_ref().to_owned()))
+        self.queue(0, data);
     }
 
     pub fn read_queue(&self) -> Vec<Request> {
-        self.queue.write().unwrap().drain(..).collect()
+        let mut buf = vec![]; // TODO reader.len() as cap
+        while let Some(req) = self.reader.try_recv() {
+            buf.push(req)
+        }
+        buf
     }
 
     pub fn len(&self) -> usize {
-        self.queue.read().unwrap().len()
+        self.queue.len()
     }
 
     pub fn clear(&self) {
-        self.queue.write().unwrap().clear();
+        while let Some(_req) = self.reader.try_recv() {}
     }
 }

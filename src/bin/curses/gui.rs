@@ -64,10 +64,11 @@ impl Gui {
     pub fn run(&mut self) -> RunState {
         use pancurses::Input::*;
 
+        // I don't like this ReadType/RunState garbage
         match self.input.read_input() {
             Ok(rt) => match rt {
                 ReadType::Line(line) => {
-                    if let Err(err) = self.commands.handle(&line) {
+                    if let Err(err) = self.commands.dispatch(&line) {
                         debug!("command error: {:?}", err);
                         return RunState::Exit;
                     }
@@ -78,10 +79,12 @@ impl Gui {
                 ReadType::None => if !self.read_buffers() {
                     // wipe out the state
                     debug!("resetting the state");
-                    self.state.reset();
+                    // flush the queue before clearing
+                    self.read_queue();
 
+                    self.state.reset();
                     self.state.activate_buffer(0);
-                    self.queue.status("Disconnected from server: quit");
+                    // TODO probably put up a message here
                 },
             },
             Err(err) => trace!("unknown: {:?}", err),
@@ -90,6 +93,7 @@ impl Gui {
         RunState::Continue
     }
 
+    // TODO get rid of this bool
     // false == restart
     fn read_buffers(&self) -> bool {
         if !self.read_errors() {
@@ -98,15 +102,14 @@ impl Gui {
 
         self.read_queue();
         self.update_state();
-
         true
     }
 
     // false == restart
     fn read_errors(&self) -> bool {
         if let Some(errors) = self.state.read_errors() {
-            if let Ok(err) = errors.try_recv() {
-                debug!("error from irc client: {:?}", err);
+            if let Some(err) = errors.try_recv() {
+                self.queue.status(&format!("irc client error: {:?}", err));
                 return false;
             }
         };

@@ -1,9 +1,12 @@
 use std::collections::VecDeque;
-use std::sync::mpsc::Receiver;
 use std::sync::{Arc, RwLock};
+
+use crossbeam_channel as channel;
 
 use super::*;
 use riirc::{Command, IrcClient, Prefix};
+
+type ErrorChannel = channel::Receiver<riirc::IrcError>;
 
 pub struct State {
     inner: RwLock<Inner>,
@@ -12,10 +15,11 @@ pub struct State {
 
 struct Inner {
     client: Option<Arc<riirc::Client>>,
-    errors: Option<Arc<Receiver<riirc::Error>>>,
+    errors: Option<Arc<ErrorChannel>>,
     buffers: VecDeque<Arc<Buffer>>,
     active_buffer: usize,
 
+    // TODO this should hide the mutex
     config: Arc<RwLock<Config>>,
 }
 
@@ -198,8 +202,9 @@ impl State {
         self.queue.push(Request::Queue(index, msg));
     }
 
-    pub fn set_client(&self, client: riirc::Client, errors: Receiver<riirc::Error>) {
+    pub fn set_client(&self, client: riirc::Client) {
         let inner = &mut self.inner.write().unwrap();
+        let errors = client.errors();
         inner.client = Some(Arc::new(client));
         inner.errors = Some(Arc::new(errors));
     }
@@ -214,7 +219,7 @@ impl State {
         Arc::clone(&inner.config)
     }
 
-    pub fn read_errors(&self) -> Option<Arc<Receiver<riirc::Error>>> {
+    pub fn read_errors(&self) -> Option<Arc<ErrorChannel>> {
         let inner = self.inner.read().unwrap();
         inner.errors.as_ref().map(Arc::clone)
     }
@@ -302,8 +307,7 @@ impl State {
 
                 let nick = Self::get_nick_for(&msg).expect("join requires a name");
                 if *nick == me.expect("self nick is required") {
-                    self.queue
-                        .push(Request::Queue(pos, format!("Joining: {}", target)))
+                    self.queue.queue(pos, &format!("joining: {}", target));
                 }
             }
             Command::Part { target, reason } => {}

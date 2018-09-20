@@ -1,5 +1,3 @@
-use super::client::{Client, Inner};
-
 pub trait IrcClient {
     fn privmsg(&self, target: impl AsRef<str>, data: impl AsRef<str>) {
         self.write(&format!("PRIVMSG {} :{}\r\n", target.as_ref(), data.as_ref()).as_bytes())
@@ -82,45 +80,6 @@ pub trait IrcClient {
     fn write(&self, data: &[u8]);
 
     fn close(&self);
-}
-
-impl IrcClient for Client {
-    fn write(&self, data: &[u8]) {
-        let inner = &self.inner.read().unwrap();
-        inner.write(data);
-    }
-
-    fn close(&self) {
-        let inner = &self.inner.write().unwrap();
-        inner.close();
-    }
-}
-
-impl IrcClient for Inner {
-    fn write(&self, data: &[u8]) {
-        use std::io::Write;
-        use std::str;
-
-        // trim the \r\n
-        trace!(
-            ">> {}",
-            str::from_utf8(&data[..data.len() - 2]).expect("valid utf-8")
-        );
-
-        // TODO split this as 510 chunks (512 - CLRF)
-        self.write
-            .lock()
-            .unwrap()
-            .write_all(data)
-            .expect("IrcClient write");
-    }
-
-    fn close(&self) {
-        use std::net::Shutdown;
-        self.read
-            .shutdown(Shutdown::Both)
-            .expect("shutdown TcpStream");
-    }
 }
 
 fn join_with<'a>(i: impl Iterator<Item = &'a str>, s: &str) -> String {

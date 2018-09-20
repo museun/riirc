@@ -11,20 +11,8 @@ pub enum Error {
     InvalidBuffer(&'static str),
     AlreadyConnected,
     NotConnected,
+    ClientError(riirc::IrcError),
     ForceExit,
-}
-
-impl Error {
-    fn report_error(&self, ctx: &Context) {
-        use self::Error::*;
-
-        match &self {
-            InvalidArgument(s) | InvalidBuffer(s) => ctx.queue.status(s),
-            AlreadyConnected => ctx.queue.status("already connected"),
-            NotConnected => ctx.queue.status("not connected"),
-            _ => {}
-        }
-    }
 }
 
 // TODO make a help system
@@ -76,7 +64,7 @@ impl Processor {
         self.map.insert("/bind", bind_command);
     }
 
-    pub fn handle(&mut self, input: &str) -> CommandResult {
+    pub fn dispatch(&mut self, input: &str) -> CommandResult {
         if input.is_empty() {
             return Ok(());
         }
@@ -104,13 +92,21 @@ impl Processor {
             config: Arc::clone(&self.state.get_config()),
             parts: &parts,
         };
-        match func(&ctx) {
-            Err(ref err) if *err != Error::ForceExit => err.report_error(&ctx),
-            Err(err) => Err(err)?,
-            _ => {}
-        };
 
-        Ok(())
+        // TODO make this better
+        func(&ctx).or_else(|err| {
+            use self::Error::*;
+            match err {
+                InvalidArgument(s) | InvalidBuffer(s) => ctx.queue.status(s),
+                ClientError(err) => ctx
+                    .queue
+                    .status(&format!("error from irc client: {:?}", err)),
+                AlreadyConnected => ctx.queue.status("already connected"),
+                NotConnected => ctx.queue.status("not connected"),
+                ForceExit => return Err(ForceExit),
+            };
+            Ok(())
+        })
     }
 }
 
@@ -141,23 +137,17 @@ fn connect_command(ctx: &Context) -> CommandResult {
         Err(Error::AlreadyConnected)?;
     };
 
-    let (addr, nick, user, real) = {
-        let config = ctx.config.read().unwrap();
-        (
-            config.server.to_string(),
-            config.nick.to_string(),
-            config.user.to_string(),
-            config.real.to_string(),
-        )
-    };
+    let config = ctx.config.read().unwrap();
+    ctx.queue
+        .status(&format!("connecting to {}", &config.server));
 
-    let client = riirc::Client::new(&addr).expect("connect to localhost");
-    client.nick(&nick);
-    client.user(&user, &real);
-
-    let errors = client.run();
-    ctx.state.set_client(client, errors);
-
+    let client = riirc::Client::connect(&config.server).map_err(Error::ClientError)?;
+    if !&config.pass.is_empty() {
+        client.pass(&config.pass)
+    }
+    client.nick(&config.nick);
+    client.user(&config.user, &config.real);
+    ctx.state.set_client(client);
     Ok(())
 }
 
