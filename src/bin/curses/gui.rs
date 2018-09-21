@@ -3,47 +3,6 @@ use std::sync::{Arc, RwLock};
 use super::*;
 use riirc::IrcClient;
 
-pub trait Window {
-    fn window(&self) -> &pancurses::Window;
-
-    fn output(&self, output: &Output, eol: bool) {
-        for (r, cp) in output.colors.iter() {
-            self.insert(*cp, &output.data[r.start..r.end], false)
-        }
-        if eol {
-            self.window().addch('\n');
-        }
-    }
-
-    // TODO impl background colors
-    fn insert(&self, color: impl Into<ColorPair>, s: impl AsRef<str>, eol: bool) {
-        let window = self.window();
-        let (y, x) = window.get_cur_yx();
-
-        let color = color.into();
-        let s = s.as_ref();
-        window.addstr(s);
-
-        let (ny, nx) = window.get_cur_yx();
-        window.mvchgat(
-            y,
-            x,
-            s.len() as i32,
-            if color.bold {
-                pancurses::A_BOLD
-            } else {
-                pancurses::A_NORMAL
-            },
-            color.fg.into(),
-        );
-        window.mv(ny, nx);
-        if eol {
-            window.addch('\n');
-        }
-        window.refresh();
-    }
-}
-
 type ShouldNotExit = bool;
 
 // it supports utf-8 but it doesn't change the codepage in windows
@@ -56,7 +15,7 @@ pub struct Gui {
 
     config: Arc<RwLock<Config>>,
     state: Arc<State>,
-    queue: Arc<MessageQueue>,
+    queue: Arc<MessageQueue<Request>>,
     commands: Processor,
 }
 
@@ -92,12 +51,16 @@ impl Gui {
         trace!("bounds: {:?}", bounds);
 
         let container = Arc::new(container);
-
-        let output = OutputWindow::new(Arc::clone(&container));
-        let input = InputWindow::new(
+        let output = InnerWindow::new(
+            OutputWindow::create,
             Arc::clone(&container),
-            Arc::clone(&queue),
-            Arc::clone(&config),
+            Arc::clone(&state),
+        );
+
+        let input = InnerWindow::new(
+            InputWindow::create,
+            Arc::clone(&container),
+            Arc::clone(&state),
         );
 
         let nicklist = NicklistWindow::new(Arc::clone(&container));
@@ -117,19 +80,6 @@ impl Gui {
         }
     }
 
-    // fn dump_colors(&self, buf: usize) {
-    //     for i in 0..pancurses::COLOR_PAIRS() {
-    //         if i > 0 && i % 16 == 0 {
-    //             self.output.addch('\n');
-    //         }
-    //         self.output.attrset(pancurses::COLOR_PAIR(i as u64));
-    //         self.output.addch('@');
-    //         self.output
-    //             .attrset(pancurses::COLOR_PAIR(i as u64) | pancurses::A_BOLD);
-    //         self.output.addch('#');
-    //     }
-    // }
-
     pub fn run(&mut self) {
         use pancurses::Input::*;
 
@@ -142,7 +92,7 @@ impl Gui {
                         match err {
                             // TODO output-ize this
                             InvalidArgument(s) | InvalidBuffer(s) => {
-                                self.queue.status(Output::new().add(s).build())
+                                self.output(Output::new().add(s).build(), true)
                             }
                             ClientError(err) => {
                                 let output = Output::new()
@@ -152,7 +102,7 @@ impl Gui {
                                     .fg(Color::Cyan)
                                     .add(format!("{:?}", err))
                                     .build();
-                                self.queue.status(output);
+                                self.output(output, true);
                             }
                             AlreadyConnected => {
                                 let output = Output::new()
@@ -160,7 +110,7 @@ impl Gui {
                                     .add("error: ")
                                     .add("already connected")
                                     .build();
-                                self.queue.status(output)
+                                self.output(output, true)
                             }
                             NotConnected => {
                                 let output = Output::new()
@@ -168,7 +118,7 @@ impl Gui {
                                     .add("error: ")
                                     .add("not connected")
                                     .build();
-                                self.queue.status(output)
+                                self.output(output, true)
                             }
                             ForceExit => break,
                         }
@@ -216,7 +166,7 @@ impl Gui {
                     .add(format!("{:?}", err))
                     .build();
 
-                self.queue.status(output);
+                self.output(output, true);
                 return false;
             }
         };
@@ -228,7 +178,7 @@ impl Gui {
             return;
         }
 
-        for req in self.queue.read_queue() {
+        for req in self.queue.read_all() {
             match req {
                 Request::Queue(pos, data) => {
                     if let Some(buf) = self.state.get_buffer(pos) {
@@ -238,7 +188,7 @@ impl Gui {
                     let (index, buf) = self.state.current_buffer();
                     if index == pos {
                         if let Some(msg) = buf.most_recent() {
-                            self.output.output(&msg, true);
+                            self.output.window().output(&msg, true);
                         }
                     }
                 }
@@ -272,9 +222,9 @@ impl Gui {
                     // TODO get rid of these allocations
                     if let Some(client) = self.state.client() {
                         if let Some(ch) = client.state().get_channel(&buf.name()) {
+                            self.nicklist.toggle();
                             self.nicklist
                                 .update(&ch.users().iter().map(|s| s.as_str()).collect::<Vec<_>>());
-                            self.nicklist.toggle();
                         }
                     }
                 }
@@ -283,6 +233,11 @@ impl Gui {
                 Request::ClearHistory(_buf) => self.input.clear_history(),
 
                 Request::SwitchBuffer(buf) => {
+                    if buf == 0 && self.nicklist.is_visible() {
+                        self.nicklist.toggle();
+                        return;
+                    }
+
                     self.state.activate_buffer(buf);
                 }
 
@@ -320,7 +275,7 @@ impl Gui {
                             .add(chan)
                             .add(". not on channel")
                             .build();
-                        self.queue.status(output)
+                        self.output(output, true)
                     } else {
                         self.state.remove_buffer(&chan);
                     }
@@ -332,6 +287,12 @@ impl Gui {
                 }
             };
         }
+    }
+}
+
+impl Outputter for Gui {
+    fn output(&self, output: impl Into<Output>, eol: bool) {
+        self.queue.enqueue(Request::Queue(0, output.into()));
     }
 }
 

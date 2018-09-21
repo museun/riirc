@@ -1,4 +1,4 @@
-use super::{inputbuffer, messagequeue};
+use super::{inputbuffer, request};
 use std::convert::{TryFrom, TryInto};
 use std::fmt;
 
@@ -278,11 +278,11 @@ impl<'a> TryFrom<&'a str> for KeyRequest {
     }
 }
 
-impl TryFrom<KeyRequest> for messagequeue::Request {
+impl TryFrom<KeyRequest> for request::Request {
     type Error = ();
-    fn try_from(kr: KeyRequest) -> Result<messagequeue::Request, Self::Error> {
+    fn try_from(kr: KeyRequest) -> Result<request::Request, Self::Error> {
         use self::KeyRequest::*;
-        use super::messagequeue::Request;
+        use super::request::Request;
 
         // for msg queue requests
         let res = match kr {

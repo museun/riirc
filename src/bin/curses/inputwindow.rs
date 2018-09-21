@@ -1,75 +1,44 @@
 use pancurses;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use super::inputbuffer::{Command, Move, MoveableCursor};
 use super::*;
 
-struct WindowWrapper(pancurses::Window);
-
-impl ::std::ops::Deref for WindowWrapper {
-    type Target = pancurses::Window;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl MoveableCursor for WindowWrapper {
-    fn move_cursor(&self, pos: usize) {
-        self.mv(self.get_cur_y(), pos as i32);
-    }
-
-    fn clear(&self) {
-        self.0.clear();
-    }
-
-    fn delete_at(&self, pos: usize) {
-        self.mv(self.get_cur_y(), pos as i32);
-        self.delch();
-    }
-
-    fn insert_at(&self, pos: usize, ch: char) {
-        self.mv(self.get_cur_y(), pos as i32);
-        self.insch(ch);
-        self.mv(self.get_cur_y(), pos as i32 + 1);
-    }
-}
-
 pub struct InputWindow {
-    parent: Arc<pancurses::Window>,
-    window: Arc<WindowWrapper>,
-
-    buffer: InputBuffer<WindowWrapper>,
-    queue: Arc<MessageQueue>,
-    config: Arc<RwLock<Config>>,
+    window: Arc<InnerWindow<InputWindow>>,
+    buffer: InputBuffer<InnerWindow<InputWindow>>,
 }
 
-impl InputWindow {
-    pub fn new(
-        parent: Arc<pancurses::Window>,
-        queue: Arc<MessageQueue>,
-        config: Arc<RwLock<Config>>,
-    ) -> Self {
-        let bounds = parent.get_max_yx();
-        let window = parent
-            .subwin(1, bounds.1, bounds.0 - 1, 0)
-            .expect("create input subwindow");
+impl WindowBuilder<Self> for InputWindow {
+    fn create(parent: CWindow) -> CWindow {
+        let (h, w) = parent.get_max_yx();
 
-        let window = Arc::new(WindowWrapper(window));
+        let window = parent
+            .subwin(1, w, h - 1, 0)
+            .expect("create input subwindow");
         window.nodelay(true);
         window.keypad(true);
 
-        let max = window.get_max_x() as usize;
-        let buffer = InputBuffer::new(max, Arc::clone(&window));
-
-        Self {
-            parent,
-            window,
-            buffer,
-            queue,
-            config,
-        }
+        Arc::new(window)
     }
 
+    fn new(window: InnerWindow<Self>) -> Self {
+        let window = Arc::new(window);
+
+        let max = window.window().get_max_x() as usize;
+        let buffer = InputBuffer::new(max, Arc::clone(&window));
+
+        Self { window, buffer }
+    }
+}
+
+impl Window<Self> for InputWindow {
+    fn window(&self) -> InnerWindow<Self> {
+        self.window
+    }
+}
+
+impl InputWindow {
     pub fn read_input(&mut self) -> ReadType {
         use pancurses::Input::*;
         match self.window.getch() {
@@ -130,11 +99,17 @@ impl InputWindow {
 
         if let Some(req) = {
             let keybind = KeyType::from(*key);
-            self.config.read().unwrap().keybinds.get(&keybind)
+            self.window
+                .state()
+                .config()
+                .read()
+                .unwrap()
+                .keybinds
+                .get(&keybind)
         } {
             trace!("req: {:?}", req);
-            if let Ok(cmd) = messagequeue::Request::try_from(*req) {
-                self.queue.request(cmd);
+            if let Ok(cmd) = Request::try_from(*req) {
+                self.window.state().queue(cmd);
             }
             if let Ok(cmd) = inputbuffer::Command::try_from(*req) {
                 self.buffer.handle_command(&cmd);

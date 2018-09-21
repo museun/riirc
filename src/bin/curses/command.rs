@@ -15,27 +15,33 @@ pub enum Error {
     ForceExit,
 }
 
-// TODO make a help system
-// TODO TODO deserialize it from a file
-
 type CommandResult = Result<(), Error>;
 type Command = fn(&Context) -> CommandResult;
 
 struct Context<'a> {
     state: Arc<State>,
-    queue: Arc<MessageQueue>,
+    queue: Arc<MessageQueue<Request>>,
     config: Arc<RwLock<Config>>,
     parts: &'a [&'a str],
+}
+
+impl<'a> Context<'a> {
+    pub fn request(&self, req: Request) {
+        self.queue.enqueue(req)
+    }
+    pub fn status(&self, output: impl Into<Output>) {
+        self.request(Request::Queue(0, output.into()));
+    }
 }
 
 pub struct Processor {
     map: HashMap<&'static str, Command>,
     state: Arc<State>,
-    queue: Arc<MessageQueue>,
+    queue: Arc<MessageQueue<Request>>,
 }
 
 impl Processor {
-    pub fn new(state: Arc<State>, queue: Arc<MessageQueue>) -> Self {
+    pub fn new(state: Arc<State>, queue: Arc<MessageQueue<Request>>) -> Self {
         let mut this = Self {
             map: HashMap::new(),
             state,
@@ -87,7 +93,7 @@ impl Processor {
                 .fg(Color::Cyan)
                 .add(query)
                 .build();
-            self.queue.status(output);
+            self.queue.enqueue(Request::Queue(0, output));
             return Ok(());
         }
 
@@ -98,7 +104,7 @@ impl Processor {
         let ctx = Context {
             state: Arc::clone(&self.state),
             queue: Arc::clone(&self.queue),
-            config: Arc::clone(&self.state.get_config()),
+            config: Arc::clone(&self.state.config()),
             parts: &parts,
         };
 
@@ -124,7 +130,7 @@ fn assume_args(ctx: &Context, msg: &'static str) -> CommandResult {
 fn echo_command(ctx: &Context) -> CommandResult {
     for part in ctx.parts {
         let output = Output::new().add(*part).build();
-        ctx.queue.status(output);
+        ctx.status(output);
     }
     Ok(())
 }
@@ -142,7 +148,7 @@ fn connect_command(ctx: &Context) -> CommandResult {
         .fg(Color::Cyan)
         .add(&config.server)
         .build();
-    ctx.queue.status(output);
+    ctx.status(output);
 
     let client = riirc::Client::connect(&config.server).map_err(Error::ClientError)?;
     if !&config.pass.is_empty() {
@@ -163,7 +169,7 @@ fn quit_command(ctx: &Context) -> CommandResult {
         Some(ctx.parts.join(" "))
     };
 
-    ctx.queue.request(Request::Quit(msg));
+    ctx.request(Request::Quit(msg));
     Ok(())
 }
 
@@ -172,7 +178,7 @@ fn join_command(ctx: &Context) -> CommandResult {
     assume_args(&ctx, "try: /join <chan>")?;
 
     // TODO make this actually work on multiple channerls + keys
-    ctx.queue.request(Request::Join(ctx.parts[0].to_owned()));
+    ctx.request(Request::Join(ctx.parts[0].to_owned()));
     Ok(())
 }
 
@@ -190,12 +196,12 @@ fn part_command(ctx: &Context) -> CommandResult {
         ctx.parts[0].to_string()
     };
 
-    ctx.queue.request(Request::Part(ch));
+    ctx.request(Request::Part(ch));
     Ok(())
 }
 
 fn clear_command(ctx: &Context) -> CommandResult {
-    ctx.queue.request(Request::Clear(true));
+    ctx.request(Request::Clear(true));
     Ok(())
 }
 
@@ -206,7 +212,7 @@ fn buffer_command(ctx: &Context) -> CommandResult {
         .parse::<usize>()
         .map_err(|_e| Error::InvalidArgument("try: /buffer N (a number this time)"))?;
 
-    ctx.queue.request(Request::SwitchBuffer(buf));
+    ctx.request(Request::SwitchBuffer(buf));
     Ok(())
 }
 
@@ -229,7 +235,7 @@ fn list_buffers_command(ctx: &Context) -> CommandResult {
         }
     }
 
-    ctx.queue.status(output.build());
+    ctx.status(output.build());
     Ok(())
 }
 
@@ -245,7 +251,7 @@ fn bind_command(ctx: &Context) -> CommandResult {
                     .fg(Color::Cyan)
                     .add(v.to_string())
                     .build();
-                ctx.queue.status(output)
+                ctx.status(output)
             }
         }
         (Some(key), None) => {
@@ -258,7 +264,7 @@ fn bind_command(ctx: &Context) -> CommandResult {
                     .fg(Color::Cyan)
                     .add(v.to_string())
                     .build();
-                ctx.queue.status(output);
+                ctx.status(output);
             } else {
                 let output = Output::new()
                     .fg(Color::Red)
@@ -267,7 +273,7 @@ fn bind_command(ctx: &Context) -> CommandResult {
                     .fg(Color::Cyan)
                     .add(*key)
                     .build();
-                ctx.queue.status(output);
+                ctx.status(output);
             }
         }
         (Some(key), Some(value)) => {
@@ -285,7 +291,7 @@ fn bind_command(ctx: &Context) -> CommandResult {
                         .fg(Color::BrightGreen)
                         .add(next.to_string())
                         .build();
-                    ctx.queue.status(output);
+                    ctx.status(output);
 
                     keybinds.insert(next, req);
                 }
@@ -297,7 +303,7 @@ fn bind_command(ctx: &Context) -> CommandResult {
                     .fg(Color::Cyan)
                     .add(*key)
                     .build();
-                ctx.queue.status(output);
+                ctx.status(output);
             }
         }
         _ => {}
@@ -324,7 +330,7 @@ fn rehash_command(ctx: &Context) -> CommandResult {
                 .fg(Color::Yellow)
                 .add("riirc.toml")
                 .build();
-            ctx.queue.status(output);
+            ctx.status(output);
         }
     };
 
@@ -333,6 +339,6 @@ fn rehash_command(ctx: &Context) -> CommandResult {
 
 fn clear_history_command(ctx: &Context) -> CommandResult {
     let (index, _) = ctx.state.current_buffer();
-    ctx.queue.request(Request::ClearHistory(index));
+    ctx.request(Request::ClearHistory(index));
     Ok(())
 }

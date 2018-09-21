@@ -11,7 +11,13 @@ type ErrorChannel = channel::Receiver<riirc::IrcError>;
 
 pub struct State {
     inner: RwLock<Inner>,
-    queue: Arc<MessageQueue>,
+    queue: Arc<MessageQueue<Request>>,
+}
+
+impl MessageReceiver<Request> for State {
+    fn queue(&self, data: impl Into<Request>) {
+        self.queue.enqueue(data.into())
+    }
 }
 
 struct Inner {
@@ -26,8 +32,10 @@ struct Inner {
 
 const BUFFER_MAX_SIZE: usize = 25 * 5;
 
+// TODO split this up
+
 impl State {
-    pub fn new(queue: Arc<MessageQueue>, config: Arc<RwLock<Config>>) -> Self {
+    pub fn new(queue: Arc<MessageQueue<Request>>, config: Arc<RwLock<Config>>) -> Self {
         let mut buffers = VecDeque::new();
         buffers.push_back(Arc::new(Buffer::new("*status", BUFFER_MAX_SIZE)));
 
@@ -119,6 +127,7 @@ impl State {
             }
             inner.active_buffer = buf as usize;
         }
+
         trace!("activating buffer: {}", buf);
         self.display_buffer();
     }
@@ -140,10 +149,10 @@ impl State {
         let buffer = Arc::clone(&inner.buffers[inner.active_buffer]);
 
         let name = buffer.name().to_string();
-        self.queue.request(Request::Clear(false));
+        self.queue.enqueue(Request::Clear(false));
         for output in buffer.messages() {
             self.queue
-                .request(Request::Target(inner.active_buffer, output))
+                .enqueue(Request::Target(inner.active_buffer, output))
         }
     }
 
@@ -185,7 +194,7 @@ impl State {
                 .add("error: ")
                 .add("not connected to server")
                 .build();
-            self.queue.status(output);
+            self.output(output, true);
             return;
         }
 
@@ -198,7 +207,7 @@ impl State {
                 .fg(Color::Cyan)
                 .add(buffer.name())
                 .build();
-            self.queue.status(output);
+            self.output(output, true);
             return;
         }
 
@@ -220,7 +229,7 @@ impl State {
         output.fg(Color::Green).add(nickname);
         let output = output.add(" ").add(data).build();
 
-        self.queue.request(Request::Queue(index, output));
+        self.queue.enqueue(Request::Queue(index, output));
     }
 
     pub fn set_client(&self, client: riirc::Client) {
@@ -235,7 +244,7 @@ impl State {
         inner.client.as_ref().map(Arc::clone)
     }
 
-    pub fn get_config(&self) -> Arc<RwLock<Config>> {
+    pub fn config(&self) -> Arc<RwLock<Config>> {
         let inner = self.inner.read().unwrap();
         Arc::clone(&inner.config)
     }
@@ -283,7 +292,7 @@ impl State {
                 buf.push_message(&output);
 
                 if current == pos as usize {
-                    self.queue.request(Request::Target(current, output));
+                    self.queue.enqueue(Request::Target(current, output));
                 }
             }
 
@@ -304,7 +313,7 @@ impl State {
                     inner.buffers[0].push_message(&output);
                 }
                 if current == 0 {
-                    self.queue.request(Request::Target(current, output));
+                    self.queue.enqueue(Request::Target(current, output));
                 }
             }
 
@@ -336,7 +345,9 @@ impl State {
                         .add(channel)
                         .build()
                 };
-                self.queue.queue(pos, output)
+
+                // TODO abstract this
+                self.queue.enqueue(Request::Queue(pos, output));
             }
 
             Command::Part {
@@ -357,7 +368,9 @@ impl State {
                     if let Some(reason) = reason {
                         output.add(": ").add(reason);
                     }
-                    self.queue.queue(pos, output.build());
+
+                    // TODO abstract this
+                    self.queue.enqueue(Request::Queue(pos, output.build()));
                 }
             }
 
@@ -374,6 +387,12 @@ impl State {
             Some(Prefix::Server { host }) => Some(&host),
             _ => None,
         }
+    }
+}
+
+impl Outputter for State {
+    fn output(&self, output: impl Into<Output>, eol: bool) {
+        self.queue.enqueue(Request::Queue(0, output.into()));
     }
 }
 

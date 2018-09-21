@@ -1,51 +1,25 @@
-use super::*;
-
 use crossbeam_channel as channel;
 
-#[derive(Debug, PartialEq)]
-pub enum Request {
-    Clear(bool),
-    Join(String),
-    Part(String),
-    Quit(Option<String>),
-
-    ToggleNickList,
-    ClearHistory(usize),
-
-    SwitchBuffer(usize),
-    NextBuffer,
-    PrevBuffer,
-
-    Queue(usize, Output),  // buffer index
-    Target(usize, Output), // buffer index
+pub trait MessageReceiver<T> {
+    fn queue(&self, data: impl Into<T>);
 }
 
-pub struct MessageQueue {
-    queue: channel::Sender<Request>,
-    reader: channel::Receiver<Request>,
+pub struct MessageQueue<T> {
+    queue: channel::Sender<T>,
+    reader: channel::Receiver<T>,
 }
 
-impl MessageQueue {
+impl<T> MessageQueue<T> {
     pub fn new() -> Self {
         let (queue, reader) = channel::unbounded();
         Self { queue, reader }
     }
 
-    pub fn request(&self, req: Request) {
-        trace!("pushing: {:?}", req);
+    pub fn enqueue(&self, req: T) {
         self.queue.send(req);
     }
 
-    // TODO impl Into<Output>
-    pub fn queue(&self, buf: usize, output: Output) {
-        self.request(Request::Queue(buf, output));
-    }
-
-    pub fn status(&self, output: Output) {
-        self.queue(0, output);
-    }
-
-    pub fn read_queue(&self) -> Vec<Request> {
+    pub fn read_all(&self) -> Vec<T> {
         let mut buf = Vec::with_capacity(self.reader.len());
         while let Some(req) = self.reader.try_recv() {
             buf.push(req)

@@ -4,14 +4,13 @@ use std::sync::RwLock;
 
 pub struct Buffer {
     name: String,
-    messages: RwLock<Queue<Output>>, // TODO use a Cow here
+    messages: RwLock<Queue<Output>>,
 }
 
 impl Buffer {
-    pub fn new(name: impl AsRef<str>, max: usize) -> Self {
-        let name = name.as_ref().to_owned();
+    pub fn new(name: impl Into<String>, max: usize) -> Self {
         Self {
-            name,
+            name: name.into(),
             messages: RwLock::new(Queue::new(max)),
         }
     }
@@ -33,7 +32,7 @@ impl Buffer {
         self.messages.write().unwrap().clear();
     }
 
-    // this copies all of the messages
+    /// this copies all of the messages
     pub fn messages(&self) -> Vec<Output> {
         let messages = &self.messages.read().unwrap();
         messages.iter().cloned().collect()

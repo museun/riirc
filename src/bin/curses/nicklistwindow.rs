@@ -14,11 +14,9 @@ impl NicklistWindow {
     pub fn new(parent: Arc<pancurses::Window>) -> Self {
         let bounds = parent.get_max_yx();
         let window = parent
-            .subwin(bounds.0 - 1, bounds.1 / 5, 0, bounds.1 - bounds.1 / 5)
+            .subwin(0, 0, 0, bounds.1 - bounds.1 / 5)
             .expect("create nicklist");
 
-        window.draw_box(0, 0);
-        window.overlay(&parent);
         window.refresh();
 
         NicklistWindow {
@@ -33,12 +31,18 @@ impl NicklistWindow {
     }
 
     pub fn toggle(&self) {
+        self.window.clear();
+
+        self.window.draw_box(0, 0);
+
+        let bounds = self.parent.get_max_yx();
+        let w = bounds.1 / 5;
         if !self.shown.load(Ordering::Relaxed) {
-            self.window.overlay(&self.parent);
+            self.window.resize(w, bounds.0 - 1);
         } else {
-            self.window.clear();
-            self.parent.overlay(&self.window);
+            self.window.resize(bounds.0 - 1, 0);
         }
+
         self.window.refresh();
         self.parent.refresh();
         self.shown.fetch_xor(true, Ordering::Relaxed);
