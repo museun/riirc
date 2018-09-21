@@ -1,20 +1,24 @@
 use super::*;
 use pancurses;
+use std::sync::Arc;
 
 pub struct OutputWindow {
+    parent: Arc<pancurses::Window>,
     window: pancurses::Window,
 }
 
 impl OutputWindow {
-    pub fn new(window: pancurses::Window) -> Self {
-        Self { window }
-    }
+    pub fn new(parent: Arc<pancurses::Window>) -> Self {
+        let bounds = parent.get_max_yx();
 
-    // pub fn writeln(&self, s: impl AsRef<str>) {
-    //     self.window.addstr(s.as_ref());
-    //     self.window.addstr("\n");
-    //     self.window.refresh();
-    // }
+        let window = parent
+            .subwin(bounds.0 - 1, bounds.1 - bounds.1 / 5, 0, 0)
+            .expect("create output subwindow");
+        window.setscrreg(0, window.get_max_y());
+        window.scrollok(true);
+
+        Self { parent, window }
+    }
 
     pub fn clear(&self) {
         self.window.erase();

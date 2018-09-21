@@ -140,10 +140,10 @@ impl State {
         let buffer = Arc::clone(&inner.buffers[inner.active_buffer]);
 
         let name = buffer.name().to_string();
-        self.queue.push(Request::Clear(false));
+        self.queue.request(Request::Clear(false));
         for output in buffer.messages() {
             self.queue
-                .push(Request::Target(inner.active_buffer, output))
+                .request(Request::Target(inner.active_buffer, output))
         }
     }
 
@@ -220,7 +220,7 @@ impl State {
         output.fg(Color::Green).add(nickname);
         let output = output.add(" ").add(data).build();
 
-        self.queue.push(Request::Queue(index, output));
+        self.queue.request(Request::Queue(index, output));
     }
 
     pub fn set_client(&self, client: riirc::Client) {
@@ -283,7 +283,7 @@ impl State {
                 buf.push_message(&output);
 
                 if current == pos as usize {
-                    self.queue.push(Request::Target(current, output));
+                    self.queue.request(Request::Target(current, output));
                 }
             }
 
@@ -304,7 +304,7 @@ impl State {
                     inner.buffers[0].push_message(&output);
                 }
                 if current == 0 {
-                    self.queue.push(Request::Target(current, output));
+                    self.queue.request(Request::Target(current, output));
                 }
             }
 

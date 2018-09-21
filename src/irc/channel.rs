@@ -50,5 +50,9 @@ impl Channel {
         inner.users.remove(user);
     }
 
-    // TODO expose an iterator for the users
+    // TODO get rid of this clone
+    pub fn users(&self) -> Vec<String> {
+        let inner = &*self.inner.read().unwrap();
+        inner.users.iter().cloned().collect()
+    }
 }

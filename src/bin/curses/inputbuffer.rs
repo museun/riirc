@@ -1,8 +1,11 @@
 use std::cmp::{max, min};
 use std::sync::Arc;
 
+use super::boundedset::BoundedSet;
+
 pub trait MoveableCursor {
     fn move_cursor(&self, pos: usize);
+    fn clear(&self);
     fn delete_at(&self, pos: usize);
     fn insert_at(&self, pos: usize, ch: char) {}
 }
@@ -14,6 +17,9 @@ pub enum Command {
     Insert(usize, char),
     Append(char),
     Move(Move),
+
+    // these aren't really movement
+    Recall(Move),
 }
 
 #[derive(Debug, PartialEq)]
@@ -27,12 +33,60 @@ pub enum Move {
     Exact(usize),
 }
 
+#[derive(Debug)]
+struct History {
+    queue: BoundedSet<String>,
+    pos: i32,
+}
+
+impl History {
+    pub fn new() -> Self {
+        Self {
+            queue: BoundedSet::new(32),
+            pos: -1,
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.queue.clear();
+        self.pos = -1;
+    }
+
+    pub fn append(&mut self, data: impl Into<String>) {
+        self.queue.insert(data.into());
+        self.pos = -1;
+    }
+
+    pub fn prev(&mut self) -> Option<&String> {
+        if self.queue.len() == 0 || self.pos as usize == self.queue.len() {
+            return None;
+        }
+
+        self.pos += 1;
+        self.queue.iter().rev().nth(self.pos as usize)
+    }
+
+    pub fn next(&mut self) -> Option<&String> {
+        if self.queue.len() == 0 {
+            return None;
+        }
+
+        if self.pos > 0 {
+            self.pos -= 1;
+        }
+
+        self.queue.iter().rev().nth(self.pos as usize)
+    }
+}
+
 // TODO utf-8 this
 
 pub struct InputBuffer<M>
 where
     M: MoveableCursor,
 {
+    history: History,
+
     width: usize,
     buf: Vec<char>,
     position: usize,
@@ -53,9 +107,8 @@ where
     M: MoveableCursor,
 {
     pub fn new(width: usize, window: Arc<M>) -> Self {
-        // TODO pre-allocate the buffer
-
         InputBuffer {
+            history: History::new(),
             width,
             buf: vec![],
             position: 0,
@@ -63,9 +116,20 @@ where
         }
     }
 
+    // TODO move this out of this
+    pub fn add_history(&mut self) {
+        let line = self.line().iter().cloned().collect::<String>();
+        self.history.append(line);
+    }
+
+    pub fn clear_history(&mut self) {
+        self.history.clear()
+    }
+
     pub fn clear(&mut self) {
         self.buf.clear();
         self.position = 0;
+        self.window.clear();
         self.window.move_cursor(0);
     }
 
@@ -167,6 +231,24 @@ where
             }
 
             Move(mv) => self.move_cursor(mv),
+
+            Recall(mv) => {
+                let history = match match mv {
+                    Forward => self.history.next(),
+                    Backward => self.history.prev(),
+                    _ => unreachable!(),
+                } {
+                    Some(history) => history.clone(),
+                    None => return,
+                };
+
+                self.clear();
+                self.buf = history.chars().collect();
+                self.position = self.buf.len();
+                for (n, ch) in self.buf.iter().enumerate() {
+                    self.window.insert_at(n, *ch);
+                }
+            }
         }
     }
 

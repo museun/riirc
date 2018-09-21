@@ -50,6 +50,10 @@ pub struct Keybinds(Vec<(KeyRequest, KeyType)>);
 
 impl Keybinds {
     pub fn get(&self, key: &KeyType) -> Option<&KeyRequest> {
+        if key.0.is_empty() {
+            return None;
+        }
+
         for (v, k) in &self.0 {
             if k == key {
                 return Some(v);
@@ -96,6 +100,10 @@ impl Default for Keybinds {
     fn default() -> Self {
         let map = vec![
             (KeyRequest::Clear, "C-l".into()),
+            (KeyRequest::RecallBackward, "A-p".into()),
+            (KeyRequest::RecallForward, "A-n".into()),
+            //
+            (KeyRequest::ToggleNickList, "A-k".into()),
             //
             (KeyRequest::MoveForward, "C-f".into()),
             (KeyRequest::MoveBackward, "C-b".into()),
@@ -141,8 +149,13 @@ impl Default for Keybinds {
 pub enum KeyRequest {
     Clear,
 
+    ToggleNickList,
+
     PrevBuffer,
     NextBuffer,
+
+    RecallBackward,
+    RecallForward,
 
     MoveForward,
     MoveBackward,
@@ -226,6 +239,9 @@ impl<'a> TryFrom<&'a str> for KeyRequest {
 
         let res = match unsnakecase(&s).as_str() {
             "Clear" => Clear,
+            "RecallBackward" => RecallBackward,
+            "RecallForward" => RecallForward,
+            "ToggleNickList" => ToggleNickList,
             "PrevBuffer" => PrevBuffer,
             "NextBuffer" => NextBuffer,
             "MoveForward" => MoveForward,
@@ -268,8 +284,12 @@ impl TryFrom<KeyRequest> for messagequeue::Request {
         use self::KeyRequest::*;
         use super::messagequeue::Request;
 
+        // for msg queue requests
         let res = match kr {
             Clear => Request::Clear(true),
+
+            ToggleNickList => Request::ToggleNickList,
+
             PrevBuffer => Request::PrevBuffer,
             NextBuffer => Request::NextBuffer,
 
@@ -298,7 +318,11 @@ impl TryFrom<KeyRequest> for inputbuffer::Command {
         use super::inputbuffer::Command::*;
         use super::inputbuffer::Move::*;
 
+        // for input commands
         let res = match kr {
+            RecallForward => Recall(Forward),
+            RecallBackward => Recall(Backward),
+
             MoveForward => Move(Forward),
             MoveBackward => Move(Backward),
             MoveForwardWord => Move(ForwardWord),
@@ -352,6 +376,7 @@ impl Key {
 pub enum KeyKind {
     Backspace,
     Enter,
+    Tab,
 
     Num(usize),
 
@@ -372,6 +397,13 @@ impl KeyKind {
             0xECEE => { *m = Mod::Alt; Enter }
             0xED11 => { *m = Mod::Ctrl; Enter }
             0x000A => { *m = Mod::None; Enter }
+
+            // Alt-tab won't work for .. obvious reasons
+            0xECE2 => { *m = Mod::Ctrl; Tab }
+            // this is a fake key
+            0xECED => { debug!("fake key, maybe not a tab");
+                        *m = Mod::Shift; Tab }
+            0x0009 => { *m = Mod::None; Tab }
  
             0xEC97...0xECA0 => { *m = Mod::Alt; Num((v - 0xEC97) as usize) }
             0xED37...0xED40 => { *m = Mod::Ctrl; Num((v - 0xED37) as usize) }
@@ -384,7 +416,7 @@ impl KeyKind {
             _ => { *m = Mod::None; Other((v as u8) as char) },
         };
 
-        eprintln!("0x{:04X} | {:>3} | {:?}", v, v, key);
+        eprintln!("0x{:04X} | {:>6} | {:?}, {:?}", v, v, m, key);
 
         Some(key)
     }

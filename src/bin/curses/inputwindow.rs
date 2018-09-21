@@ -4,13 +4,6 @@ use std::sync::{Arc, RwLock};
 use super::inputbuffer::{Command, Move, MoveableCursor};
 use super::*;
 
-pub struct InputWindow {
-    window: Arc<WindowWrapper>,
-    buffer: InputBuffer<WindowWrapper>,
-    queue: Arc<MessageQueue>,
-    config: Arc<RwLock<Config>>,
-}
-
 struct WindowWrapper(pancurses::Window);
 
 impl ::std::ops::Deref for WindowWrapper {
@@ -25,6 +18,10 @@ impl MoveableCursor for WindowWrapper {
         self.mv(self.get_cur_y(), pos as i32);
     }
 
+    fn clear(&self) {
+        self.0.clear();
+    }
+
     fn delete_at(&self, pos: usize) {
         self.mv(self.get_cur_y(), pos as i32);
         self.delch();
@@ -37,12 +34,26 @@ impl MoveableCursor for WindowWrapper {
     }
 }
 
+pub struct InputWindow {
+    parent: Arc<pancurses::Window>,
+    window: Arc<WindowWrapper>,
+
+    buffer: InputBuffer<WindowWrapper>,
+    queue: Arc<MessageQueue>,
+    config: Arc<RwLock<Config>>,
+}
+
 impl InputWindow {
     pub fn new(
-        window: pancurses::Window,
+        parent: Arc<pancurses::Window>,
         queue: Arc<MessageQueue>,
         config: Arc<RwLock<Config>>,
     ) -> Self {
+        let bounds = parent.get_max_yx();
+        let window = parent
+            .subwin(1, bounds.1, bounds.0 - 1, 0)
+            .expect("create input subwindow");
+
         let window = Arc::new(WindowWrapper(window));
         window.nodelay(true);
         window.keypad(true);
@@ -51,6 +62,7 @@ impl InputWindow {
         let buffer = InputBuffer::new(max, Arc::clone(&window));
 
         Self {
+            parent,
             window,
             buffer,
             queue,
@@ -62,6 +74,8 @@ impl InputWindow {
         use pancurses::Input::*;
         match self.window.getch() {
             Some(Character(ch)) => self.handle_input_key(ch),
+            // TODO discriminate between bad keys better
+            Some(KeyBTab) => self.handle_input_key('\u{ECED}'),
             Some(ch) => self.handle_other_key(ch),
             _ => ReadType::None,
         }
@@ -73,11 +87,18 @@ impl InputWindow {
         let cmd = match input {
             KeyHome => &Command::Move(Move::StartOfLine),
             KeyEnd => &Command::Move(Move::EndOfLine),
+
+            KeyUp => &Command::Recall(Move::Backward),
+            KeyDown => &Command::Recall(Move::Forward),
+
             KeyLeft => &Command::Move(Move::Backward),
             KeySMessage => &Command::Move(Move::BackwardWord),
+
             KeyRight => &Command::Move(Move::Forward),
             KeySResume => &Command::Move(Move::ForwardWord),
+
             KeyDC => &Command::Delete(Move::Forward),
+
             KeyF1 | KeyF2 | KeyF3 | KeyF4 | KeyF5 | KeyF6 | KeyF7 | KeyF8 | KeyF9 | KeyF10
             | KeyF11 | KeyF12 => return ReadType::FKey(input),
             key => {
@@ -113,7 +134,7 @@ impl InputWindow {
         } {
             trace!("req: {:?}", req);
             if let Ok(cmd) = messagequeue::Request::try_from(*req) {
-                self.queue.push(cmd);
+                self.queue.request(cmd);
             }
             if let Ok(cmd) = inputbuffer::Command::try_from(*req) {
                 self.buffer.handle_command(&cmd);
@@ -141,6 +162,14 @@ impl InputWindow {
 
         self.buffer.handle_command(&Command::Append(ch));
         ReadType::None
+    }
+
+    pub fn add_history(&mut self) {
+        self.buffer.add_history();
+    }
+
+    pub fn clear_history(&mut self) {
+        self.buffer.clear_history();
     }
 
     pub fn clear_input(&mut self) {

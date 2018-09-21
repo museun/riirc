@@ -9,6 +9,9 @@ pub enum Request {
     Part(String),
     Quit(Option<String>),
 
+    ToggleNickList,
+    ClearHistory(usize),
+
     SwitchBuffer(usize),
     NextBuffer,
     PrevBuffer,
@@ -28,14 +31,14 @@ impl MessageQueue {
         Self { queue, reader }
     }
 
-    pub fn push(&self, req: Request) {
+    pub fn request(&self, req: Request) {
         trace!("pushing: {:?}", req);
         self.queue.send(req);
     }
 
     // TODO impl Into<Output>
     pub fn queue(&self, buf: usize, output: Output) {
-        self.push(Request::Queue(buf, output));
+        self.request(Request::Queue(buf, output));
     }
 
     pub fn status(&self, output: Output) {

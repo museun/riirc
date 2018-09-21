@@ -49,9 +49,10 @@ type ShouldNotExit = bool;
 // it supports utf-8 but it doesn't change the codepage in windows
 // so we should probably do that before we init the library
 pub struct Gui {
-    container: pancurses::Window,
+    container: Arc<pancurses::Window>,
     output: OutputWindow,
     input: InputWindow,
+    nicklist: NicklistWindow,
 
     config: Arc<RwLock<Config>>,
     state: Arc<State>,
@@ -90,27 +91,26 @@ impl Gui {
         let bounds = container.get_max_yx();
         trace!("bounds: {:?}", bounds);
 
-        let output = container
-            .subwin(bounds.0 - 1, bounds.1, 0, 0)
-            .expect("create output subwindow");
-        output.setscrreg(0, output.get_max_y());
-        output.scrollok(true);
-        output.color_set(0);
+        let container = Arc::new(container);
 
-        let input = container
-            .subwin(1, bounds.1, bounds.0 - 1, 0)
-            .expect("create input subwindow");
+        let output = OutputWindow::new(Arc::clone(&container));
+        let input = InputWindow::new(
+            Arc::clone(&container),
+            Arc::clone(&queue),
+            Arc::clone(&config),
+        );
 
-        //    input.bkgd(pancurses::COLOR_PAIR(16 * 5));
+        let nicklist = NicklistWindow::new(Arc::clone(&container));
 
         container.refresh();
 
         Self {
             container,
-            output: OutputWindow::new(output),
-            input: InputWindow::new(input, Arc::clone(&queue), Arc::clone(&config)),
-            commands: Processor::new(Arc::clone(&state), Arc::clone(&queue)),
+            output,
+            input,
+            nicklist,
 
+            commands: Processor::new(Arc::clone(&state), Arc::clone(&queue)),
             config: Arc::clone(&config),
             state: Arc::clone(&state),
             queue,
@@ -173,6 +173,7 @@ impl Gui {
                             ForceExit => break,
                         }
                     };
+                    self.input.add_history();
                     self.input.clear_input();
                 }
 
@@ -194,7 +195,7 @@ impl Gui {
         self.config.read().unwrap().save();
     }
 
-    fn read_buffers(&self) -> ShouldNotExit {
+    fn read_buffers(&mut self) -> ShouldNotExit {
         if !self.read_errors() {
             return false;
         }
@@ -222,13 +223,12 @@ impl Gui {
         true
     }
 
-    fn read_queue(&self) {
+    fn read_queue(&mut self) {
         if self.queue.len() == 0 {
             return;
         }
 
         for req in self.queue.read_queue() {
-            trace!("req: {:?}", req);
             match req {
                 Request::Queue(pos, data) => {
                     if let Some(buf) = self.state.get_buffer(pos) {
@@ -257,6 +257,30 @@ impl Gui {
                         buf.clear();
                     }
                 }
+
+                Request::ToggleNickList => {
+                    let (index, buf) = self.state.current_buffer();
+                    if index == 0 {
+                        return;
+                    }
+
+                    if self.nicklist.is_visible() {
+                        self.nicklist.toggle();
+                        return;
+                    }
+
+                    // TODO get rid of these allocations
+                    if let Some(client) = self.state.client() {
+                        if let Some(ch) = client.state().get_channel(&buf.name()) {
+                            self.nicklist
+                                .update(&ch.users().iter().map(|s| s.as_str()).collect::<Vec<_>>());
+                            self.nicklist.toggle();
+                        }
+                    }
+                }
+
+                // TODO: buffers don't have their own input windows
+                Request::ClearHistory(_buf) => self.input.clear_history(),
 
                 Request::SwitchBuffer(buf) => {
                     self.state.activate_buffer(buf);

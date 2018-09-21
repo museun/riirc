@@ -15,7 +15,7 @@ fn main() {
     let config = match curses::Config::load("riirc.toml") {
         Ok(config) => config,
         Err(err) => {
-            let _ = curses::Config::default();
+            curses::Config::default().save();
             info!("wrote default config to: riirc.toml");
             return;
         }

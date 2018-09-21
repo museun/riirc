@@ -14,6 +14,9 @@ use self::inputwindow::{InputWindow, ReadType};
 mod outputwindow;
 use self::outputwindow::OutputWindow;
 
+mod nicklistwindow;
+use self::nicklistwindow::NicklistWindow;
+
 mod buffer;
 use self::buffer::Buffer;
 
@@ -35,3 +38,5 @@ pub use self::keybinds::*;
 
 mod config;
 pub use self::config::*;
+
+pub mod boundedset;

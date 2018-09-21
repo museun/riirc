@@ -1,10 +1,17 @@
 use std::collections::VecDeque;
 
-pub struct Queue<T> {
+#[derive(Debug)]
+pub struct Queue<T>
+where
+    T: ::std::fmt::Debug,
+{
     queue: VecDeque<T>,
 }
 
-impl<T> Queue<T> {
+impl<T> Queue<T>
+where
+    T: ::std::fmt::Debug,
+{
     pub fn new(size: usize) -> Self {
         Self {
             queue: VecDeque::with_capacity(size),
@@ -28,6 +35,10 @@ impl<T> Queue<T> {
 
     pub fn back(&self) -> Option<&T> {
         self.queue.back()
+    }
+
+    pub fn nth_from_end(&self, n: usize) -> Option<&T> {
+        self.queue.iter().rev().nth(n)
     }
 
     pub fn is_empty(&self) -> bool {

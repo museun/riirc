@@ -63,6 +63,7 @@ impl Processor {
         self.map.insert("/buffers", list_buffers_command);
         self.map.insert("/bind", bind_command);
         self.map.insert("/rehash", rehash_command);
+        self.map.insert("/clearhistory", clear_history_command);
     }
 
     pub fn dispatch(&mut self, input: &str) -> CommandResult {
@@ -162,7 +163,7 @@ fn quit_command(ctx: &Context) -> CommandResult {
         Some(ctx.parts.join(" "))
     };
 
-    ctx.queue.push(Request::Quit(msg));
+    ctx.queue.request(Request::Quit(msg));
     Ok(())
 }
 
@@ -171,7 +172,7 @@ fn join_command(ctx: &Context) -> CommandResult {
     assume_args(&ctx, "try: /join <chan>")?;
 
     // TODO make this actually work on multiple channerls + keys
-    ctx.queue.push(Request::Join(ctx.parts[0].to_owned()));
+    ctx.queue.request(Request::Join(ctx.parts[0].to_owned()));
     Ok(())
 }
 
@@ -189,12 +190,12 @@ fn part_command(ctx: &Context) -> CommandResult {
         ctx.parts[0].to_string()
     };
 
-    ctx.queue.push(Request::Part(ch));
+    ctx.queue.request(Request::Part(ch));
     Ok(())
 }
 
 fn clear_command(ctx: &Context) -> CommandResult {
-    ctx.queue.push(Request::Clear(true));
+    ctx.queue.request(Request::Clear(true));
     Ok(())
 }
 
@@ -205,7 +206,7 @@ fn buffer_command(ctx: &Context) -> CommandResult {
         .parse::<usize>()
         .map_err(|_e| Error::InvalidArgument("try: /buffer N (a number this time)"))?;
 
-    ctx.queue.push(Request::SwitchBuffer(buf));
+    ctx.queue.request(Request::SwitchBuffer(buf));
     Ok(())
 }
 
@@ -327,5 +328,11 @@ fn rehash_command(ctx: &Context) -> CommandResult {
         }
     };
 
+    Ok(())
+}
+
+fn clear_history_command(ctx: &Context) -> CommandResult {
+    let (index, _) = ctx.state.current_buffer();
+    ctx.queue.request(Request::ClearHistory(index));
     Ok(())
 }
