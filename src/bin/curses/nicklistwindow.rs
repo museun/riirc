@@ -1,38 +1,59 @@
+use super::*;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 
-use pancurses;
-
-// do I actually want to store the nicknames?
 pub struct NicklistWindow {
-    parent: Arc<pancurses::Window>,
-    window: pancurses::Window,
+    parent: CWindow,
+    window: CWindow,
     shown: AtomicBool,
+    state: Arc<ui::State>,
 }
 
 impl NicklistWindow {
-    pub fn new(parent: Arc<pancurses::Window>) -> Self {
+    pub fn new(parent: CWindow, state: Arc<ui::State>) -> Self {
         let bounds = parent.get_max_yx();
         let window = parent
             .subwin(0, 0, 0, bounds.1 - bounds.1 / 5)
             .expect("create nicklist");
 
         window.refresh();
-
-        NicklistWindow {
-            window,
+        Self {
             parent,
+            window: window.into(),
             shown: AtomicBool::new(false),
+            state,
+        }
+    }
+}
+
+impl Window for NicklistWindow {
+    fn window(&self) -> CWindow {
+        self.window
+    }
+}
+
+impl ui::Outputter for NicklistWindow {
+    fn output(&self, output: ui::Output, eol: bool) {
+        let window = self.window();
+        for (r, cp) in output.colors.iter() {
+            insert_into(&window, *cp, &output.data[r.start..r.end], false)
+        }
+        if eol {
+            self.window().addch('\n');
         }
     }
 
-    pub fn is_visible(&self) -> bool {
+    fn clear(&self) {
+        self.window().clear();
+    }
+}
+
+impl ui::NicklistWindow for NicklistWindow {
+    fn is_visible(&self) -> bool {
         self.shown.load(Ordering::Relaxed)
     }
 
-    pub fn toggle(&self) {
+    fn toggle(&self) {
         self.window.clear();
-
         self.window.draw_box(0, 0);
 
         let bounds = self.parent.get_max_yx();
@@ -48,30 +69,5 @@ impl NicklistWindow {
         self.shown.fetch_xor(true, Ordering::Relaxed);
 
         trace!("toggled: {}", self.shown.load(Ordering::Relaxed));
-    }
-
-    pub fn update(&self, list: &[&str]) {
-        self.window.clear();
-        self.window.draw_box(0, 0);
-
-        for name in list {
-            self.window.addstr(name);
-            self.window.addstr("\n");
-        }
-
-        for i in 0..10 {
-            self.window.addstr(
-                ::std::iter::repeat('F')
-                    .take(10)
-                    .collect::<Vec<_>>()
-                    .iter()
-                    .fold(String::new(), |mut a, &c| {
-                        a.push(c);
-                        a
-                    }),
-            );
-            self.window.addstr("\n");
-        }
-        self.window.refresh();
     }
 }

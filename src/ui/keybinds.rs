@@ -1,5 +1,4 @@
-use super::{inputbuffer, request};
-use std::convert::{TryFrom, TryInto};
+use super::request;
 use std::fmt;
 
 #[derive(Debug, PartialEq, Clone, Eq, Hash)]
@@ -71,14 +70,9 @@ impl Keybinds {
         }
     }
 
-    pub fn lookup<K>(&self, req: K) -> Option<&KeyType>
-    where
-        K: TryInto<KeyRequest>,
-    {
-        if let Ok(req) = req.try_into() {
-            if let Some(pos) = self.iter().position(|(r, _)| *r == req) {
-                return self.0.get(pos).map(|(_, v)| v);
-            }
+    pub fn lookup(&self, req: KeyRequest) -> Option<&KeyType> {
+        if let Some(pos) = self.iter().position(|(r, _)| *r == req) {
+            return self.0.get(pos).map(|(_, v)| v);
         }
         None
     }
@@ -208,16 +202,8 @@ impl fmt::Display for KeyRequest {
     }
 }
 
-impl TryFrom<String> for KeyRequest {
-    type Error = ();
-    fn try_from(s: String) -> Result<Self, Self::Error> {
-        KeyRequest::try_from(s.as_str())
-    }
-}
-
-impl<'a> TryFrom<&'a str> for KeyRequest {
-    type Error = ();
-    fn try_from(s: &'a str) -> Result<Self, Self::Error> {
+impl KeyRequest {
+    pub fn parse(s: impl AsRef<str>) -> Option<Self> {
         use self::KeyRequest::*;
         fn unsnakecase(s: &str) -> String {
             let mut buf = String::new();
@@ -237,7 +223,7 @@ impl<'a> TryFrom<&'a str> for KeyRequest {
             buf
         }
 
-        let res = match unsnakecase(&s).as_str() {
+        let res = match unsnakecase(s.as_ref()).as_str() {
             "Clear" => Clear,
             "RecallBackward" => RecallBackward,
             "RecallForward" => RecallForward,
@@ -272,15 +258,14 @@ impl<'a> TryFrom<&'a str> for KeyRequest {
             "SwitchBuffer7" => SwitchBuffer7,
             "SwitchBuffer8" => SwitchBuffer8,
             "SwitchBuffer9" => SwitchBuffer9,
-            _ => return Err(()),
+            _ => return None,
         };
-        Ok(res)
+        Some(res)
     }
 }
 
-impl TryFrom<KeyRequest> for request::Request {
-    type Error = ();
-    fn try_from(kr: KeyRequest) -> Result<request::Request, Self::Error> {
+impl request::Request {
+    pub fn parse(kr: KeyRequest) -> Option<Self> {
         use self::KeyRequest::*;
         use super::request::Request;
 
@@ -303,20 +288,18 @@ impl TryFrom<KeyRequest> for request::Request {
             SwitchBuffer7 => Request::SwitchBuffer(7),
             SwitchBuffer8 => Request::SwitchBuffer(8),
             SwitchBuffer9 => Request::SwitchBuffer(9),
-            _ => return Err(()),
+            _ => return None,
         };
 
-        Ok(res)
+        Some(res)
     }
 }
 
-impl TryFrom<KeyRequest> for inputbuffer::Command {
-    type Error = ();
-
-    fn try_from(kr: KeyRequest) -> Result<inputbuffer::Command, Self::Error> {
+impl request::Command {
+    pub fn parse(kr: KeyRequest) -> Option<Self> {
         use self::KeyRequest::*;
-        use super::inputbuffer::Command::*;
-        use super::inputbuffer::Move::*;
+        use super::request::Command::*;
+        use super::request::Move::*;
 
         // for input commands
         let res = match kr {
@@ -343,10 +326,10 @@ impl TryFrom<KeyRequest> for inputbuffer::Command {
             SwapCaseBackwardWord => SwapCase(BackwardWord),
             SwapCaseStart => SwapCase(StartOfLine),
             SwapCaseEnd => SwapCase(EndOfLine),
-            _ => return Err(()),
+            _ => return None,
         };
 
-        Ok(res)
+        Some(res)
     }
 }
 
@@ -420,4 +403,20 @@ impl KeyKind {
 
         Some(key)
     }
+}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum FKey {
+    F1,
+    F2,
+    F3,
+    F4,
+    F5,
+    F6,
+    F7,
+    F8,
+    F9,
+    F10,
+    F11,
+    F12,
 }

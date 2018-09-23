@@ -9,10 +9,16 @@ pub struct MessageQueue<T> {
     reader: channel::Receiver<T>,
 }
 
-impl<T> MessageQueue<T> {
-    pub fn new() -> Self {
+impl<T> Default for MessageQueue<T> {
+    fn default() -> Self {
         let (queue, reader) = channel::unbounded();
         Self { queue, reader }
+    }
+}
+
+impl<T> MessageQueue<T> {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub fn enqueue(&self, req: T) {
@@ -29,6 +35,10 @@ impl<T> MessageQueue<T> {
 
     pub fn len(&self) -> usize {
         self.queue.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     pub fn clear(&self) {

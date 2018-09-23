@@ -25,7 +25,7 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn connect(addr: impl AsRef<str>) -> Result<Self, Error> {
+    pub fn connect(addr: impl Into<String>) -> Result<Self, Error> {
         let (err_tx, err_rx) = channel::bounded(8);
 
         let this = Self {
@@ -39,10 +39,9 @@ impl Client {
 
         let state = Arc::clone(&this.state);
         let inner = Arc::clone(&this.inner);
-        let addr = addr.as_ref().to_string();
+        let addr = addr.into();
 
         thread::spawn(move || {
-            // TODO do something with the inner error
             let conn = match TcpStream::connect(&addr).map_err(|_err| Error::CannotConnect) {
                 Ok(conn) => conn,
                 Err(err) => {
@@ -94,30 +93,12 @@ impl Client {
         self.errors.clone()
     }
 
-    pub fn join_channel(&self, chan: impl AsRef<str>) -> bool {
-        if self.state.has_channel(chan.as_ref()) {
-            return false;
-        }
-        self.inner.join(chan, None);
-        true
-    }
-
-    pub fn leave_channel(&self, chan: impl AsRef<str>, reason: impl AsRef<str>) -> bool {
-        if !self.state.has_channel(chan.as_ref()) {
-            return false;
-        }
-
-        self.inner.part(chan, reason);
-        true
-    }
-
     pub fn state(&self) -> Arc<State> {
         Arc::clone(&self.state)
     }
 }
 
 impl IrcClient for Client {
-    // this should buffer the messages
     fn write(&self, data: &[u8]) {
         self.inner.write(data);
     }
@@ -134,19 +115,23 @@ struct Inner {
 
 impl Inner {
     fn update(&self, msg: &Message, state: &Arc<State>) {
-        let from_self = state.is_from_self(&msg);
+        let mut from_self = false;
+        if let Some(Prefix::User { nick, .. }) = &msg.prefix {
+            if let Some(current) = &state.nickname() {
+                from_self = current == nick
+            }
+        }
 
         match &msg.command {
             Command::Ping { token } => self.pong(token),
 
             Command::Join { channel, key: _key } => {
-                if from_self {
-                    state.new_channel(&channel);
-                    return;
-                }
-
-                let nick = msg.get_nick();
-                state.nick_join(&channel, &nick);
+                let channel = if from_self {
+                    state.channels().add(channel.clone())
+                } else {
+                    state.channels().get(&channel).expect("existing channel")
+                };
+                channel.add(msg.get_nick());
             }
 
             Command::Part {
@@ -154,12 +139,15 @@ impl Inner {
                 reason: _reason,
             } => {
                 if from_self {
-                    state.remove_channel(&channel);
+                    state.channels().remove(channel.clone());
                     return;
                 }
 
-                let nick = msg.get_nick();
-                state.nick_part(&channel, &nick);
+                state
+                    .channels()
+                    .get(&channel)
+                    .expect("existing channel")
+                    .remove(msg.get_nick());
             }
 
             Command::Quit { reason: _reason } => {
@@ -168,18 +156,18 @@ impl Inner {
                     return;
                 }
 
-                let nick = msg.get_nick();
-                state.remove_nick(&nick)
+                state.channels().clear_nick(msg.get_nick());
             }
 
             Command::Nick { nickname } => {
                 if from_self {
-                    state.set_nickname(nickname);
+                    state.set_nickname(nickname.clone());
                     return;
                 }
 
-                let old = msg.get_nick();
-                state.update_nick(&old, &nickname);
+                state
+                    .channels()
+                    .update_nick(msg.get_nick(), nickname.clone());
             }
 
             Command::Other {
@@ -190,11 +178,10 @@ impl Inner {
             }
 
             Command::Reply { numeric, params } => match numeric {
-                1 => {
-                    let name = &params[0];
-                    state.set_nickname(name);
-                }
+                1 => state.set_nickname(params[0].clone()),
+
                 433 => self.nick(format!("{}_", params[1])),
+
                 // TODO more numerics
                 _ => {}
             },

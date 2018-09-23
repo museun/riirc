@@ -26,9 +26,13 @@ where
         self.data.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn insert(&mut self, item: T) -> Option<T> {
         // TODO implement a binary search for this
-        if let Some(_) = self.data.iter().find(|&t| *t == item) {
+        if self.data.iter().any(|t| *t == item) {
             return None;
         }
 

@@ -1,114 +1,168 @@
-use std::cmp::{max, min};
-use std::sync::Arc;
+use super::*;
+use std::sync::RwLock;
 
-use super::boundedset::BoundedSet;
-
-pub trait MoveableCursor {
-    fn move_cursor(&self, pos: usize);
-    fn clear(&self);
-    fn delete_at(&self, pos: usize);
-    fn insert_at(&self, pos: usize, ch: char) {}
+pub struct Input {
+    parent: Rc<Window>,
+    window: Rc<Window>,
+    ctx: Rc<Context<Request>>,
+    buffer: InputBuffer<Window>,
+    history: RwLock<ui::History>,
 }
 
-#[derive(Debug, PartialEq)]
-pub enum Command {
-    Delete(Move),
-    SwapCase(Move),
-    Insert(usize, char),
-    Append(char),
-    Move(Move),
+impl Input {
+    pub fn new(parent: Rc<Window>, ctx: Rc<Context<Request>>) -> Self {
+        let (h, w) = parent.get_max_yx();
+        let window = parent
+            .subwin(1, w, h - 1, 0)
+            .expect("create input subwindow");
+        window.nodelay(true);
+        window.keypad(true);
+        let width = window.get_max_x() as usize;
 
-    // these aren't really movement
-    Recall(Move),
-}
-
-#[derive(Debug, PartialEq)]
-pub enum Move {
-    EndOfLine,
-    StartOfLine,
-    ForwardWord,
-    Forward,
-    BackwardWord,
-    Backward,
-    Exact(usize),
-}
-
-#[derive(Debug)]
-struct History {
-    queue: BoundedSet<String>,
-    pos: i32,
-}
-
-impl History {
-    pub fn new() -> Self {
+        let window = Rc::new(window.into());
         Self {
-            queue: BoundedSet::new(32),
-            pos: -1,
+            parent,
+            window: Rc::clone(&window),
+            ctx,
+            history: RwLock::new(ui::History::new()),
+            buffer: InputBuffer::new(width, window),
         }
     }
 
-    pub fn clear(&mut self) {
-        self.queue.clear();
-        self.pos = -1;
+    pub fn read_input(&mut self) -> ui::ReadType {
+        use pancurses::Input::*;
+        match self.window.getch() {
+            Some(Character(ch)) => self.handle_input_key(ch),
+            // TODO discriminate between bad keys better
+            Some(KeyBTab) => self.handle_input_key('\u{ECED}'),
+            Some(ch) => self.handle_other_key(ch),
+            _ => ui::ReadType::None,
+        }
     }
 
-    pub fn append(&mut self, data: impl Into<String>) {
-        self.queue.insert(data.into());
-        self.pos = -1;
+    pub fn add_history(&mut self) {
+        self.buffer.add_history()
     }
 
-    pub fn prev(&mut self) -> Option<&String> {
-        if self.queue.len() == 0 || self.pos as usize == self.queue.len() {
-            return None;
-        }
-
-        self.pos += 1;
-        self.queue.iter().rev().nth(self.pos as usize)
+    pub fn clear_history(&mut self) {
+        trace!("clearing history");
+        self.buffer.clear_history();
     }
 
-    pub fn next(&mut self) -> Option<&String> {
-        if self.queue.len() == 0 {
-            return None;
+    pub fn clear_input(&mut self) {
+        trace!("clearing input");
+        self.buffer.clear();
+        self.window.clear();
+    }
+
+    fn handle_other_key(&mut self, input: pancurses::Input) -> ui::ReadType {
+        use pancurses::Input::*;
+
+        let cmd = match input {
+            KeyHome => &ui::Command::Move(ui::Move::StartOfLine),
+            KeyEnd => &ui::Command::Move(ui::Move::EndOfLine),
+
+            KeyUp => &ui::Command::Recall(ui::Move::Backward),
+            KeyDown => &ui::Command::Recall(ui::Move::Forward),
+
+            KeyLeft => &ui::Command::Move(ui::Move::Backward),
+            KeySMessage => &ui::Command::Move(ui::Move::BackwardWord),
+
+            KeyRight => &ui::Command::Move(ui::Move::Forward),
+            KeySResume => &ui::Command::Move(ui::Move::ForwardWord),
+
+            KeyDC => &ui::Command::Delete(ui::Move::Forward),
+
+            KeyF1 | KeyF2 | KeyF3 | KeyF4 | KeyF5 | KeyF6 | KeyF7 | KeyF8 | KeyF9 | KeyF10
+            | KeyF11 | KeyF12 => return ui::ReadType::FKey(input),
+            key => {
+                debug!("unknown input: {:?}", key);
+                return ui::ReadType::None;
+            }
+        };
+
+        self.buffer.handle_command(cmd);
+        ui::ReadType::None
+    }
+
+    fn handle_modified_key(&mut self, key: &ui::Key) -> ui::ReadType {
+        use super::ui::{KeyKind::*, Mod::*};
+
+        match (&key.modifier, &key.kind) {
+            (None, Backspace) => {
+                self.buffer
+                    .handle_command(&ui::Command::Delete(ui::Move::Backward));
+                self.window.refresh();
+                return ui::ReadType::None;
+            }
+            (None, Enter) => {
+                let buf = self.buffer.line().into_iter().collect();
+                return ui::ReadType::Line(buf);
+            }
+            _ => {}
         }
 
-        if self.pos > 0 {
-            self.pos -= 1;
+        if let Some(req) = {
+            let keybind = ui::KeyType::from(*key);
+            self.ctx.state.config().keybinds().get(&keybind)
+            //self.state.config().read().unwrap().keybinds.get(&keybind)
+        } {
+            trace!("req: {:?}", req);
+            if let Some(cmd) = ui::Request::parse(*req) {
+                self.ctx.state.queue(cmd);
+            }
+            if let Some(cmd) = ui::Command::parse(*req) {
+                self.buffer.handle_command(&cmd);
+            }
+        }
+        ui::ReadType::None
+    }
+
+    fn handle_input_key(&mut self, ch: char) -> ui::ReadType {
+        if let Some(key) = ui::Key::parse(ch as u16) {
+            match (&key.modifier, &key.kind) {
+                (ui::Mod::None, ui::KeyKind::Other(_))
+                | (ui::Mod::None, ui::KeyKind::Char(_))
+                | (ui::Mod::Shift, ui::KeyKind::Char(_)) => {}
+                _ => return self.handle_modified_key(&key),
+            };
         }
 
-        self.queue.iter().rev().nth(self.pos as usize)
+        // TODO don't do this here
+        // why not?
+        let window = self.buffer.display();
+        for (i, ch) in window.iter().enumerate() {
+            self.window.mvaddch(0, i as i32, *ch);
+        }
+
+        self.buffer.handle_command(&ui::Command::Append(ch));
+        ui::ReadType::None
     }
 }
+
+impl_recv!(Input);
+
+use std::cmp::{max, min};
 
 // TODO utf-8 this
-
 pub struct InputBuffer<M>
 where
     M: MoveableCursor,
 {
-    history: History,
-
+    history: ui::History,
     width: usize,
     buf: Vec<char>,
     position: usize,
-    window: Arc<M>,
-}
-
-impl<M> ::std::fmt::Debug for InputBuffer<M>
-where
-    M: MoveableCursor,
-{
-    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
-        write!(f, "{}:{} {:?}", self.position, self.buf.len(), self.buf)
-    }
+    window: Rc<M>,
 }
 
 impl<M> InputBuffer<M>
 where
     M: MoveableCursor,
 {
-    pub fn new(width: usize, window: Arc<M>) -> Self {
+    pub fn new(width: usize, window: Rc<M>) -> Self {
         InputBuffer {
-            history: History::new(),
+            history: ui::History::new(),
             width,
             buf: vec![],
             position: 0,
@@ -145,8 +199,8 @@ where
         &self.buf
     }
 
-    pub fn handle_command(&mut self, cmd: &Command) {
-        use self::{Command::*, Move::*};
+    pub fn handle_command(&mut self, cmd: &ui::Command) {
+        use super::ui::{Command::*, Move::*};
 
         macro_rules! check {
             ($m:expr) => {
@@ -177,13 +231,13 @@ where
 
                 let (low, high) = (min(start, end), max(start, end));
                 let range = low..high;
-                for n in range.clone() {
+                for _n in range.clone() {
                     self.window.delete_at(low);
                 }
 
                 self.buf.drain(range);
                 self.window.move_cursor(low);
-                self.move_cursor(&self::Move::Exact(low));
+                self.move_cursor(&ui::Move::Exact(low));
             }
 
             SwapCase(mv) => {
@@ -195,7 +249,7 @@ where
 
                 let (low, high) = (min(start, end), max(start, end));
                 let range = low..high;
-                for n in range.clone() {
+                for _n in range.clone() {
                     self.window.delete_at(low);
                 }
 
@@ -211,7 +265,7 @@ where
                     self.buf.insert(start + n, *c);
                 }
                 self.window.move_cursor(start);
-                self.move_cursor(&self::Move::Exact(start));
+                self.move_cursor(&ui::Move::Exact(start));
             }
 
             Insert(index, ch) => {
@@ -226,7 +280,7 @@ where
             }
 
             Append(ch) => {
-                self.handle_command(&Command::Insert(self.position, *ch));
+                self.handle_command(&ui::Command::Insert(self.position, *ch));
                 self.position += 1;
             }
 
@@ -234,8 +288,8 @@ where
 
             Recall(mv) => {
                 let history = match match mv {
-                    Forward => self.history.next(),
-                    Backward => self.history.prev(),
+                    Forward => self.history.forward(),
+                    Backward => self.history.backward(),
                     _ => unreachable!(),
                 } {
                     Some(history) => history.clone(),
@@ -252,8 +306,8 @@ where
         }
     }
 
-    fn move_cursor(&mut self, mv: &Move) {
-        use self::Move::*;
+    fn move_cursor(&mut self, mv: &ui::Move) {
+        use super::ui::Move::*;
 
         let end = self.buf.len();
         match mv {

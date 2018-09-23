@@ -4,8 +4,10 @@ pub mod ircclient;
 pub mod message;
 pub mod prefix;
 
+pub mod queue;
+pub use self::queue::*;
+
 mod channel;
-mod queue;
 mod state;
 
 pub use self::ircclient::IrcClient;
@@ -13,11 +15,10 @@ pub use self::ircclient::IrcClient;
 use self::channel::*;
 use self::state::*;
 
-pub use self::client::{Client, Error as IrcError};
+pub use self::client::{Client, Error};
 pub use self::command::Command;
 pub use self::message::Message;
 pub use self::prefix::Prefix;
-pub use self::queue::Queue;
 
 pub(crate) fn is_valid_nick(_nick: &str) -> bool {
     /*

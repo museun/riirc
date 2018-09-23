@@ -1,7 +1,10 @@
-use super::*;
+use super::ui::keybinds::{KeyRequest, KeyType, Keybinds};
 
-use std::fs;
+use std::collections::HashMap;
+use std::io::Error as IoError;
 use std::path::Path;
+use std::{fmt, fs};
+use toml_document::ParserError as TomlError;
 
 #[derive(Debug, Default)]
 pub struct Config {
@@ -15,22 +18,32 @@ pub struct Config {
     pub keybinds: Keybinds,
 }
 
+pub enum Error {
+    CannotRead(IoError),
+    CannotParse(TomlError),
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Error::CannotRead(err) => {
+                error!("CannotRead: {}", err);
+                write!(f, "cannot read the config file")
+            }
+            Error::CannotParse(err) => {
+                error!("CannotParse: {}", err);
+                write!(f, "cannot parse the config file")
+            }
+        }
+    }
+}
+
 impl Config {
-    pub fn load(path: impl AsRef<Path>) -> Result<Self, ()> {
-        let data = fs::read_to_string(path.as_ref()).map_err(|e| {
-            error!("cannot read config file: {}", e);
-            ()
-        })?;
+    pub fn load(path: impl AsRef<Path>) -> Result<Self, Error> {
+        let data = fs::read_to_string(path.as_ref()).map_err(Error::CannotRead)?;
 
         use toml_document::*;
-
-        let doc = Document::parse(&data).map_err(|e| {
-            error!("cannot parse config file: {}", e);
-            ()
-        })?;
-
-        use std::collections::HashMap;
-        use std::convert::TryFrom;
+        let doc = Document::parse(&data).map_err(Error::CannotParse)?;
 
         let list = vec![
             "server".to_string(),
@@ -56,7 +69,7 @@ impl Config {
         let mut keybinds = Keybinds::default();
         for child in doc.get_container(1).iter_children() {
             if let ValueRef::String(data) = child.value() {
-                if let Ok(req) = KeyRequest::try_from(child.key().get().to_string()) {
+                if let Some(req) = KeyRequest::parse(child.key().get().to_string()) {
                     keybinds.insert(KeyType::from(data.get().to_string()), req)
                 }
             }
@@ -72,7 +85,7 @@ impl Config {
         })
     }
 
-    pub fn save(&self) {
+    pub fn dump(&self, w: &mut impl ::std::io::Write) {
         use toml_document::*;
 
         let mut doc = Document::new();
@@ -92,9 +105,14 @@ impl Config {
 
         let container = doc.insert_container(1, vec!["keybinds"].into_iter(), ContainerKind::Table);
         for (i, (v, k)) in self.keybinds.iter().enumerate() {
-            let s = container.insert_string(i, format!("{}", v), format!("{}", k));
+            let _s = container.insert_string(i, format!("{}", v), format!("{}", k));
         }
 
-        fs::write("riirc.toml", doc.to_string()).expect("to write config");
+        writeln!(w, "{}", doc.to_string()).expect("to write config");
+    }
+
+    pub fn save(&self) {
+        let mut file = fs::File::create("riirc.toml").expect("to create file");
+        self.dump(&mut file);
     }
 }

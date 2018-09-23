@@ -1,8 +1,10 @@
-use super::*;
+use super::colors::*;
 use std::collections::BTreeMap;
 
+// TODO: use new types so they can be converted into intermediate outputs automatically
 pub trait Outputter {
-    fn output(&self, output: impl Into<Output>, eol: bool);
+    fn output(&self, output: Output, eol: bool);
+    fn clear(&self);
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -12,11 +14,21 @@ pub struct Output {
 }
 
 impl Output {
+    pub fn stamp() -> OutputBuilder {
+        use chrono::prelude::*;
+        let mut builder = OutputBuilder::new();
+        let now: DateTime<Local> = Local::now();
+        let ts = format!("{:02}{:02}{:02} ", now.hour(), now.minute(), now.second());
+        builder.add(&ts);
+        builder
+    }
+
     pub fn new() -> OutputBuilder {
         OutputBuilder::new()
     }
 }
 
+#[derive(Default)]
 pub struct OutputBuilder {
     parts: Vec<String>,
     colors: BTreeMap<usize, ColorPair>,
