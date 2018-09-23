@@ -92,7 +92,7 @@ impl Command {
                     .ok_or_else(|| Error::MissingTarget)?
                     .split(',')
                     .next()
-                    .unwrap()[1..]
+                    .unwrap()
                     .to_owned();
                 let key = parts
                     .next()
