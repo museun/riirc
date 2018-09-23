@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -56,7 +57,7 @@ type Command = fn(&Context) -> CommandResult;
 pub(crate) struct Context<'a> {
     pub(crate) state: Rc<State>,
     pub(crate) queue: Rc<MessageQueue<Request>>,
-    pub(crate) config: Rc<Config>,
+    pub(crate) config: Rc<RefCell<Config>>,
     pub(crate) parts: &'a [&'a str],
 }
 

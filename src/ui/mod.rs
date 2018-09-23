@@ -1,8 +1,7 @@
 extern crate pancurses;
 
 use super::irc::Command as IrcCommand;
-use super::Config as IrcConfig;
-use super::{irc, ui};
+use super::{irc, ui, Config};
 
 pub mod messagequeue;
 pub use self::messagequeue::*;
@@ -31,5 +30,4 @@ pub(crate) mod state;
 pub(crate) use self::state::*;
 
 pub mod gui;
-use self::gui::Config;
 pub use self::gui::Gui;

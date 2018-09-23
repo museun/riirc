@@ -1,6 +1,5 @@
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::RwLock;
 
 use super::windows::*;
 use super::*;
@@ -14,14 +13,9 @@ pub struct Gui {
 }
 
 impl Gui {
-    pub fn new(config: IrcConfig) -> Self {
+    pub fn new(config: Config) -> Self {
         let queue = Rc::new(MessageQueue::new());
-        let state = Rc::new(State::new(
-            Rc::clone(&queue),
-            Rc::new(Config {
-                0: RwLock::new(config),
-            }),
-        ));
+        let state = Rc::new(State::new(Rc::clone(&queue), Rc::new(RefCell::new(config))));
 
         let container = Rc::new(RefCell::new(Container::new(Rc::clone(&state))));
         let events =
@@ -130,57 +124,5 @@ impl Gui {
             }
         };
         true
-    }
-}
-
-// TODO remove this garbage
-pub struct Config(RwLock<IrcConfig>);
-
-impl Config {
-    pub fn server(&self) -> String {
-        self.0.read().unwrap().server.clone()
-    }
-    pub fn nick(&self) -> String {
-        self.0.read().unwrap().nick.clone()
-    }
-    pub fn user(&self) -> String {
-        self.0.read().unwrap().user.clone()
-    }
-    pub fn real(&self) -> String {
-        self.0.read().unwrap().real.clone()
-    }
-    pub fn pass(&self) -> String {
-        self.0.read().unwrap().pass.clone()
-    }
-
-    // this is very expensive..
-    pub fn keybinds(&self) -> Keybinds {
-        self.0.read().unwrap().keybinds.clone()
-    }
-
-    pub fn update(&self, kt: ui::KeyType, kr: ui::KeyRequest) {
-        let r = &mut *self.0.write().unwrap();
-        r.keybinds.insert(kt, kr)
-    }
-
-    pub fn load() -> Option<Self> {
-        match IrcConfig::load("riirc.toml") {
-            Ok(config) => Some(Self {
-                0: RwLock::new(config),
-            }),
-            Err(err) => {
-                error!("cannot load config: {}", err);
-                None
-            }
-        }
-    }
-
-    pub fn save(&self) {
-        self.0.read().unwrap().save()
-    }
-
-    pub fn replace(&self, config: Config) {
-        let src = config.0.into_inner().expect("consume mutex");
-        ::std::mem::replace(&mut *self.0.write().unwrap(), src);
     }
 }

@@ -157,7 +157,7 @@ impl EventProcessor {
                 self.container
                     .borrow()
                     .output()
-                    .queue(windows::Request::Clear(None));
+                    .queue(ui::Request::Clear(*scrollback));
                 if *scrollback {
                     let (_, buf) = buffers.current();
                     buf.clear();

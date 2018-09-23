@@ -6,7 +6,8 @@ pub struct Container {
     input: Rc<RefCell<Input>>,
     output: Rc<Output>,
     nicklist: Rc<Nicklist>,
-    ctx: Rc<Context<Request>>,
+    ctx: Rc<Context>,
+    queue: Rc<ui::MessageQueue<ui::Request>>,
 }
 
 impl Container {
@@ -52,6 +53,7 @@ impl Container {
             output: Rc::new(output),
             nicklist: Rc::new(nicklist),
             ctx,
+            queue,
         }
     }
 

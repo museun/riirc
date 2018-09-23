@@ -105,10 +105,3 @@ pub enum Color {
     BrightYellow,
     BrightWhite,
 }
-
-impl Color {
-    pub fn bold(self) -> ColorPair {
-        let mut color: ColorPair = self.into();
-        color.bold()
-    }
-}

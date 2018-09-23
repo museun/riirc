@@ -4,13 +4,13 @@ use std::sync::RwLock;
 pub struct Input {
     parent: Rc<Window>,
     window: Rc<Window>,
-    ctx: Rc<Context<Request>>,
+    ctx: Rc<Context>,
     buffer: InputBuffer<Window>,
     history: RwLock<ui::History>,
 }
 
 impl Input {
-    pub fn new(parent: Rc<Window>, ctx: Rc<Context<Request>>) -> Self {
+    pub fn new(parent: Rc<Window>, ctx: Rc<Context>) -> Self {
         let (h, w) = parent.get_max_yx();
         let window = parent
             .subwin(1, w, h - 1, 0)
@@ -104,8 +104,7 @@ impl Input {
 
         if let Some(req) = {
             let keybind = ui::KeyType::from(*key);
-            self.ctx.state.config().keybinds().get(&keybind)
-            //self.state.config().read().unwrap().keybinds.get(&keybind)
+            self.ctx.state.config().borrow().keybinds.get(&keybind)
         } {
             trace!("req: {:?}", req);
             if let Some(cmd) = ui::Request::parse(*req) {

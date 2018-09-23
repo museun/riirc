@@ -3,6 +3,7 @@ use super::request::Request;
 use super::*;
 
 use crossbeam_channel as channel;
+use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::RwLock;
 
@@ -16,12 +17,12 @@ struct Inner {
 pub struct State {
     inner: RwLock<Inner>,
     queue: Rc<MessageQueue<Request>>,
-    config: Rc<Config>,
+    config: Rc<RefCell<Config>>,
     buffers: Rc<Buffers>,
 }
 
 impl State {
-    pub fn new(queue: Rc<MessageQueue<Request>>, config: Rc<Config>) -> Self {
+    pub fn new(queue: Rc<MessageQueue<Request>>, config: Rc<RefCell<Config>>) -> Self {
         Self {
             inner: RwLock::new(Inner {
                 client: None,
@@ -41,7 +42,7 @@ impl State {
         Rc::clone(&self.buffers)
     }
 
-    pub fn config(&self) -> Rc<Config> {
+    pub fn config(&self) -> Rc<RefCell<Config>> {
         Rc::clone(&self.config)
     }
 

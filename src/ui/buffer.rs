@@ -13,6 +13,7 @@ struct Inner {
     active: usize,
 }
 
+// TODO Buffers should be tied to a view state
 pub struct Buffers {
     inner: RwLock<Inner>,
     queue: Rc<MessageQueue<Request>>,

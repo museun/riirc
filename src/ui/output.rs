@@ -7,6 +7,12 @@ pub trait Outputter {
     fn clear(&self);
 }
 
+impl<'a> From<&'a str> for Output {
+    fn from(s: &'a str) -> Self {
+        Output::new().add(s).build()
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub struct Output {
     pub data: String,

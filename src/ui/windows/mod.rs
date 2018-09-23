@@ -42,16 +42,10 @@ impl MoveableCursor for Window {
     }
 }
 
-/*
-pub trait Outputter {
-    fn output(&self, output: Output, eol: bool);
-    fn clear(&self);
-}*/
-
 macro_rules! impl_recv {
     ($t:ty) => {
-        impl ui::MessageReceiver<Request> for $t {
-            fn queue(&self, data: impl Into<Request>) {
+        impl ui::MessageReceiver<ui::Request> for $t {
+            fn queue(&self, data: impl Into<ui::Request>) {
                 self.ctx.queue.enqueue(data.into())
             }
         }
@@ -62,7 +56,6 @@ macro_rules! impl_recv {
                     window: &Window,
                     color: impl Into<ui::ColorPair>,
                     s: impl AsRef<str>,
-                    eol: bool,
                 ) {
                     let (y, x) = window.get_cur_yx();
         
@@ -83,19 +76,16 @@ macro_rules! impl_recv {
                         color.fg.into(),
                     );
                     window.mv(ny, nx);
-                    if eol {
-                        window.addch('\n');
-                    }
-                    window.refresh();
-                }
-        
+                }        
+
                 let window = &self.window;
                 for (r, cp) in output.colors.iter() {
-                    insert_into(&window, *cp, &output.data[r.start..r.end], false)
+                    insert_into(&window, *cp, &output.data[r.start..r.end])
                 }
                 if eol {
                     self.window.addch('\n');
                 }
+                window.refresh();
             }
         
             fn clear(&self) {
@@ -114,40 +104,9 @@ use self::{input::*, nicklist::*, output::*};
 
 pub use self::container::Container;
 
-pub struct Context<T> {
+pub struct Context {
     pub(crate) state: Rc<ui::State>,
-    pub(crate) queue: Rc<ui::MessageQueue<T>>,
-}
-
-impl Context<Request> {
-    pub fn read_queue(&self) -> Vec<Request> {
-        self.queue.read_all()
-    }
-}
-
-pub enum Request {
-    Write(Option<Target>, ui::Output),
-    Writeln(Option<Target>, ui::Output),
-    Clear(Option<Target>),
-}
-
-impl From<ui::Output> for Request {
-    fn from(output: ui::Output) -> Self {
-        Request::Writeln(None, output)
-    }
-}
-
-impl From<(Target, ui::Output)> for Request {
-    fn from(output: (Target, ui::Output)) -> Self {
-        Request::Writeln(Some(output.0), output.1)
-    }
-}
-
-pub enum Target {
-    Container,
-    Output,
-    Input,
-    Nicklist,
+    pub(crate) queue: Rc<ui::MessageQueue<ui::Request>>,
 }
 
 #[derive(Debug, PartialEq, Clone)]

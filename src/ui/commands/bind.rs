@@ -3,7 +3,7 @@ use super::*;
 pub(crate) fn bind_command(ctx: &Context) -> CommandResult {
     match (ctx.parts.get(0), ctx.parts.get(1)) {
         (None, None) => {
-            let keybinds = &ctx.config.keybinds();
+            let keybinds = &ctx.config.borrow().keybinds;
             for (k, v) in keybinds.iter() {
                 let output = Output::new()
                     .fg(Color::Yellow)
@@ -17,7 +17,7 @@ pub(crate) fn bind_command(ctx: &Context) -> CommandResult {
         }
 
         (Some(key), None) => {
-            let keybinds = &ctx.config.keybinds();
+            let keybinds = &ctx.config.borrow().keybinds;
             let ok = KeyRequest::parse(*key).and_then(|key| {
                 keybinds.lookup(key).and_then(|v| {
                     let output = Output::new()
@@ -45,8 +45,9 @@ pub(crate) fn bind_command(ctx: &Context) -> CommandResult {
         }
 
         (Some(key), Some(value)) => {
+            let keybinds = &mut ctx.config.borrow_mut().keybinds;
             if let Some(req) = KeyRequest::parse(*key) {
-                if let Some(v) = ctx.config.keybinds().lookup(req) {
+                if let Some(v) = keybinds.lookup(req) {
                     let next = KeyType::from(*value);
                     let output = Output::new()
                         .fg(Color::Yellow)
@@ -59,7 +60,7 @@ pub(crate) fn bind_command(ctx: &Context) -> CommandResult {
                         .add(next.to_string())
                         .build();
                     ctx.status(output);
-                    ctx.config.update(next, req);
+                    keybinds.insert(next, req);
                 }
             } else {
                 let output = Output::new()
@@ -75,6 +76,6 @@ pub(crate) fn bind_command(ctx: &Context) -> CommandResult {
         _ => {}
     }
 
-    ctx.config.save();
+    ctx.config.borrow().save();
     Ok(Response::Nothing)
 }

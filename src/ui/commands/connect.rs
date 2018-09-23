@@ -7,19 +7,21 @@ pub(crate) fn connect_command(ctx: &Context) -> CommandResult {
         Err(Error::AlreadyConnected)?;
     };
 
+    let config = &ctx.config.borrow();
+
     let output = Output::new()
         .fg(Color::Green)
         .add("connecting to ")
         .fg(Color::Cyan)
-        .add(&ctx.config.server())
+        .add(&config.server)
         .build();
 
-    let client = irc::Client::connect(ctx.config.server().clone()).map_err(Error::ClientError)?;
-    if !&ctx.config.pass().is_empty() {
-        client.pass(&ctx.config.pass())
+    let client = irc::Client::connect(config.server.clone()).map_err(Error::ClientError)?;
+    if !&config.pass.is_empty() {
+        client.pass(&config.pass)
     }
-    client.nick(&ctx.config.nick());
-    client.user(&ctx.config.user(), &ctx.config.real());
+    client.nick(&config.nick);
+    client.user(&config.user, &config.real);
     ctx.state.set_client(client);
 
     Ok(Response::Output(output))

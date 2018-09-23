@@ -3,11 +3,11 @@ use super::*;
 pub struct Output {
     parent: Rc<Window>,
     window: Window,
-    ctx: Rc<Context<Request>>,
+    ctx: Rc<Context>,
 }
 
 impl Output {
-    pub fn new(parent: Rc<Window>, ctx: Rc<Context<Request>>) -> Self {
+    pub fn new(parent: Rc<Window>, ctx: Rc<Context>) -> Self {
         let (h, w) = parent.get_max_yx();
         let window = parent
             .subwin(h - 1, w, 0, 0)

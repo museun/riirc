@@ -11,7 +11,7 @@ pub struct MessageQueue<T> {
 
 impl<T> Default for MessageQueue<T> {
     fn default() -> Self {
-        let (queue, reader) = channel::unbounded();
+        let (queue, reader) = channel::unbounded(); // TODO this should probably be bounded
         Self { queue, reader }
     }
 }
