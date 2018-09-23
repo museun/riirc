@@ -364,7 +364,7 @@ pub enum KeyKind {
     Num(usize),
 
     Char(char),
-    Other(char),
+    Other(char), // TODO determine if Space (0x20) is a Char or an Other
 }
 
 #[rustfmt::skip]

@@ -128,6 +128,8 @@ impl EventProcessor {
     fn handle_request(&self, req: &Request) -> Option<()> {
         use super::irc::IrcClient;
 
+        trace!(">> {:?}", req);
+
         match req {
             Request::Queue(pos, data) => {
                 let buffers = self.state.buffers();
@@ -218,7 +220,7 @@ impl EventProcessor {
                 if buffers.named(&chan).is_some() {
                     buffers.activate_by_name(&chan)
                 } else {
-                    self.state.client()?.part(&chan, "leaving");
+                    self.state.client()?.join(&chan, None);
                     buffers.create(&chan, true);
                 }
             }
