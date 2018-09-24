@@ -4,31 +4,29 @@ use std::rc::Rc;
 
 use super::{colors::Color, keybinds::*, output::Output, request::*, state::State, *};
 
-// TODO figure out a macro for this
-mod bind;
-use self::bind::*;
-mod buffer;
-use self::buffer::*;
-mod clear;
-use self::clear::*;
-mod clear_history;
-use self::clear_history::*;
-mod connect;
-use self::connect::*;
-mod echo;
-use self::echo::*;
-mod exit;
-use self::exit::*;
-mod join;
-use self::join::*;
-mod list_buffers;
-use self::list_buffers::*;
-mod part;
-use self::part::*;
-mod quit;
-use self::quit::*;
-mod rehash;
-use self::rehash::*;
+macro_rules! import {
+    ($($name:ident),+) => {
+       $(
+            mod $name;
+            use self::$name::*;
+       )*
+    };
+}
+
+import!(
+    bind,
+    buffer,
+    clear,
+    clear_history,
+    connect,
+    echo,
+    exit,
+    join,
+    list_buffers,
+    part,
+    quit,
+    rehash
+);
 
 #[derive(Debug, PartialEq)]
 pub enum Error {
