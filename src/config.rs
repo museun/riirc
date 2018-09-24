@@ -1,4 +1,4 @@
-use super::ui::keybinds::{KeyRequest, KeyType, Keybinds};
+use super::ui::*;
 
 use std::collections::HashMap;
 use std::io::Error as IoError;
