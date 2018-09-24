@@ -96,11 +96,12 @@ macro_rules! impl_recv {
     };
 }
 
-mod container;
-mod input;
-mod nicklist;
-mod output;
-use self::{input::*, nicklist::*, output::*};
+import!(
+    container,
+    input,
+    nicklist,
+    output
+);
 
 pub use self::container::Container;
 

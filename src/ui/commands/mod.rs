@@ -4,15 +4,6 @@ use std::rc::Rc;
 
 use super::{colors::Color, keybinds::*, output::Output, request::*, state::State, *};
 
-macro_rules! import {
-    ($($name:ident),+) => {
-       $(
-            mod $name;
-            use self::$name::*;
-       )*
-    };
-}
-
 import!(
     bind,
     buffer,
