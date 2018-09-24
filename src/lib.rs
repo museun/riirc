@@ -15,9 +15,9 @@ macro_rules! import {
     };
 }
 
-pub mod irc;
-pub mod ui;
-pub use self::ui::Gui;
+mod config;
+mod irc;
+mod ui;
 
-pub mod config;
 pub use self::config::Config;
+pub use self::ui::Gui;
